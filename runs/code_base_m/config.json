@@ -8,9 +8,12 @@
   "lr": 0.0003,
   "n_future": 2,
   "align_weight": 0.5,
-  "log_every": 100,
+  "log_every": 175,
   "sample_every": 700,
-  "n_params": 940800,
-  "best_step": 600,
-  "best_val": 4.80620641708374
+  "moe_experts": 4,
+  "moe_top_k": 1,
+  "bitlinear_experts": false,
+  "n_params": 1734400,
+  "best_step": 525,
+  "best_val": 4.883134651184082
 }
