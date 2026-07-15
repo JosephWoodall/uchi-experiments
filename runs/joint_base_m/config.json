@@ -1,0 +1,19 @@
+{
+  "dataset": "joint",
+  "arm": "base",
+  "size": "m",
+  "block_size": 128,
+  "batch_size": 32,
+  "steps": 700,
+  "lr": 0.0003,
+  "n_future": 2,
+  "align_weight": 0.5,
+  "log_every": 175,
+  "sample_every": 175,
+  "moe_experts": 0,
+  "moe_top_k": 1,
+  "bitlinear_experts": false,
+  "n_params": 957696,
+  "best_step": 700,
+  "best_val": 3.301443335413933
+}
