@@ -1,0 +1,14 @@
+{
+  "dataset": "rj",
+  "arm": "base",
+  "size": "l",
+  "block_size": 128,
+  "batch_size": 32,
+  "steps": 300,
+  "lr": 0.0003,
+  "n_future": 2,
+  "align_weight": 0.5,
+  "log_every": 300,
+  "sample_every": 300,
+  "n_params": 5033984
+}
