@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from bitnet import BitLinear
 from rwkv_model import TimeMixing
 
 
@@ -27,66 +28,17 @@ class GPTConfig:
     moe_experts: int = 0  # 0 = dense MLP; >0 = MoE FFN with this many routed experts
     moe_top_k: int = 1
     use_bitlinear_experts: bool = False  # ported from uchi/uchi/flux/bitnet.py
+    use_bitlinear: bool = False  # BitLinear throughout Ducky's own blocks (attention/RWKV
+    # projections + dense MLP), not just the (abandoned) MoE experts above
+    embedding_rank: int = 0  # 0 = plain tied nn.Embedding (unchanged); >0 = TensorRankEmbedding
+    # (uchi-style low-rank factored embedding) at this rank, output head reuses the same
+    # factorization transposed (uchi's "symmetric factored projection" for the output head --
+    # not uchi's separate syntax-prediction DualHead, which needs labels we don't have)
     use_rwkv_hybrid: bool = False  # mostly RWKV time-mixing blocks (unlimited context, O(1)
     # memory), periodic attention for in-window quality -- mirrors uchi's own SSM +
     # periodic-attention design (uchi/README.md). Ignored if False (pure attention, unchanged).
     attention_layers: tuple = field(default_factory=tuple)  # 0-indexed layers that use attention
     # when use_rwkv_hybrid=True; all others use RWKV time-mixing.
-
-
-class WeightQuantizer(torch.autograd.Function):
-    """1.58-bit (ternary {-1,0,1}) weight quantization, straight-through
-    estimator. Ported from uchi/uchi/flux/bitnet.py -- exists there to
-    shrink FLUX's weight storage 20x; here it's applied to MoE experts so
-    total capacity (many experts) doesn't cost proportionally more storage.
-    """
-
-    @staticmethod
-    def forward(ctx, weight):
-        gamma = weight.abs().mean()
-        quantized = torch.round(weight / (gamma + 1e-8))
-        quantized = torch.clamp(quantized, -1.0, 1.0)
-        return quantized * gamma
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
-
-class ActivationQuantizer(torch.autograd.Function):
-    """8-bit activation quantization, straight-through estimator. Ported
-    alongside WeightQuantizer from uchi/uchi/flux/bitnet.py.
-    """
-
-    @staticmethod
-    def forward(ctx, x):
-        gamma = x.abs().max(dim=-1, keepdim=True).values
-        scale = 127.0 / (gamma + 1e-8)
-        quantized = torch.round(x * scale)
-        quantized = torch.clamp(quantized, -128.0, 127.0)
-        return quantized / scale
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
-
-class BitLinear(nn.Linear):
-    """Ternary-weight, 8-bit-activation linear layer. Ported from uchi's
-    BitLinear (uchi/uchi/flux/bitnet.py) unchanged."""
-
-    def __init__(self, in_features, out_features, bias=False):
-        super().__init__(in_features, out_features, bias)
-        self.layer_norm = nn.LayerNorm(in_features)
-        self.quantize = True
-
-    def forward(self, x):
-        x_norm = self.layer_norm(x)
-        if self.quantize:
-            x_quant = ActivationQuantizer.apply(x_norm)
-            w_quant = WeightQuantizer.apply(self.weight)
-            return F.linear(x_quant, w_quant, self.bias)
-        return F.linear(x_norm, self.weight, self.bias)
 
 
 class Expert(nn.Module):
@@ -157,26 +109,27 @@ class MoEFFN(nn.Module):
 class Block(nn.Module):
     def __init__(self, cfg: GPTConfig, layer_idx: int = 0):
         super().__init__()
+        Linear = BitLinear if cfg.use_bitlinear else nn.Linear
         self.ln1 = nn.LayerNorm(cfg.d_model)
         self.is_attention = (not cfg.use_rwkv_hybrid) or (layer_idx in cfg.attention_layers)
         if self.is_attention:
-            self.qkv = nn.Linear(cfg.d_model, 3 * cfg.d_model)
-            self.attn_out = nn.Linear(cfg.d_model, cfg.d_model)
+            self.qkv = Linear(cfg.d_model, 3 * cfg.d_model)
+            self.attn_out = Linear(cfg.d_model, cfg.d_model)
         else:
             # RWKV time-mixing: gated linear recurrence, O(1) state per
             # channel regardless of sequence length (see rwkv_model.py).
             # Unlike the attention path above, this can carry state across
             # chunks far longer than block_size -- that's the whole point.
-            self.time_mixing = TimeMixing(cfg.d_model)
+            self.time_mixing = TimeMixing(cfg.d_model, linear_cls=Linear)
         self.ln2 = nn.LayerNorm(cfg.d_model)
         self.is_moe = cfg.moe_experts > 0
         if self.is_moe:
             self.mlp = MoEFFN(cfg)
         else:
             self.mlp = nn.Sequential(
-                nn.Linear(cfg.d_model, 4 * cfg.d_model),
+                Linear(cfg.d_model, 4 * cfg.d_model),
                 nn.GELU(),
-                nn.Linear(4 * cfg.d_model, cfg.d_model),
+                Linear(4 * cfg.d_model, cfg.d_model),
             )
         self.n_head = cfg.n_head
         self.d_model = cfg.d_model
@@ -199,16 +152,45 @@ class Block(nn.Module):
         return x, aux_loss, new_rwkv_state
 
 
+class TensorRankEmbedding(nn.Module):
+    """Low-rank factored embedding (uchi-style Tucker decomposition):
+    embed(i) = W2 @ W1 @ e_i, rank r << d_model. Cost: V*r + r*d vs V*d for
+    a full table -- at our 1024-token vocab this is still a real cut (e.g.
+    r=32, d=128: ~36.9K vs 131K params, ~72% reduction), not negligible
+    just because the vocab is small. The output head reuses the SAME
+    factorization transposed (uchi's own "symmetric factored projection
+    for the output head") -- this is the parameter-efficiency mechanism,
+    not uchi's separate syntax-prediction DualHead, which needs labeled
+    syntax tokens we don't have.
+    """
+
+    def __init__(self, vocab_size: int, d_model: int, rank: int):
+        super().__init__()
+        self.w1 = nn.Parameter(torch.randn(vocab_size, rank) * 0.02)
+        self.w2 = nn.Parameter(torch.randn(rank, d_model) * 0.02)
+
+    def embed(self, idx: torch.Tensor) -> torch.Tensor:
+        return F.embedding(idx, self.w1) @ self.w2
+
+    def project(self, h: torch.Tensor) -> torch.Tensor:
+        return h @ self.w2.T @ self.w1.T
+
+
 class TinyGPT(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         self.cfg = cfg
-        self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.use_factored_embedding = cfg.embedding_rank > 0
+        if self.use_factored_embedding:
+            self.factored_emb = TensorRankEmbedding(cfg.vocab_size, cfg.d_model, cfg.embedding_rank)
+        else:
+            self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.pos_emb = nn.Embedding(cfg.block_size, cfg.d_model)
         self.blocks = nn.ModuleList([Block(cfg, layer_idx=i) for i in range(cfg.n_layer)])
         self.ln_f = nn.LayerNorm(cfg.d_model)
-        self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
-        self.lm_head.weight = self.tok_emb.weight  # tied, standard practice
+        if not self.use_factored_embedding:
+            self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+            self.lm_head.weight = self.tok_emb.weight  # tied, standard practice
 
         self.extra_heads = None
         if cfg.n_future > 1:
@@ -244,7 +226,8 @@ class TinyGPT(nn.Module):
         """
         B, T = idx.shape
         pos = torch.arange(T, device=idx.device)
-        x = self.tok_emb(idx) + self.pos_emb(pos)
+        tok_x = self.factored_emb.embed(idx) if self.use_factored_embedding else self.tok_emb(idx)
+        x = tok_x + self.pos_emb(pos)
         aux_loss = torch.tensor(0.0, device=idx.device)
         new_states = []
         for i, block in enumerate(self.blocks):
@@ -265,7 +248,7 @@ class TinyGPT(nn.Module):
         short-context behavior).
         """
         h, aux_loss, new_states = self.hidden_states(idx, rwkv_states)
-        logits = self.lm_head(h)
+        logits = self.factored_emb.project(h) if self.use_factored_embedding else self.lm_head(h)
         extra_logits = None
         if self.extra_heads is not None:
             extra_logits = [head(h) for head in self.extra_heads]

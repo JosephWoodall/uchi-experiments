@@ -84,8 +84,16 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   memory, linear time, verified directly on the Ducky checkpoint, not
   just standalone RWKV) but this checkpoint doesn't yet *use* it for
   long-range recall — trained exclusively on 128-token crops, so nothing
-  ever rewarded retaining information past that horizon. A real test of
-  recall needs training with cross-chunk gradient flow; not done.
+  ever rewarded retaining information past that horizon. Cross-chunk BPTT
+  training (`train_bptt.py`, K=4 chunks, state not detached across them)
+  is the direct fix, run and re-checked against the recall test — see
+  `tasks/todo.md` Phase H for the result.
+- Grounding/abstention validated as a genuine net positive, not just
+  mechanically sound: selective-prediction check shows accuracy on
+  answered (non-abstained) tokens is meaningfully higher than the
+  unconditional baseline on both domains (rj +5.3 points, code +3.3
+  points, `eval_grounding.py`). This closes the "difference vs.
+  improvement" gap the swarm.md postmortem originally flagged.
 - Abstention thresholds are now calibrated against this checkpoint's own
   confidence distribution (not borrowed production-scale numbers), and
   the fast/slow-path split behaves sensibly (mostly answers, abstains

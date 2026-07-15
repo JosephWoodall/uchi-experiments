@@ -34,14 +34,14 @@ class TimeMixing(nn.Module):
     mechanism, not just an inference trick.
     """
 
-    def __init__(self, d_model):
+    def __init__(self, d_model, linear_cls=nn.Linear):
         super().__init__()
         self.time_decay = nn.Parameter(torch.zeros(d_model))
         self.time_first = nn.Parameter(torch.zeros(d_model))
-        self.key = nn.Linear(d_model, d_model, bias=False)
-        self.value = nn.Linear(d_model, d_model, bias=False)
-        self.receptance = nn.Linear(d_model, d_model, bias=False)
-        self.output = nn.Linear(d_model, d_model, bias=False)
+        self.key = linear_cls(d_model, d_model, bias=False)
+        self.value = linear_cls(d_model, d_model, bias=False)
+        self.receptance = linear_cls(d_model, d_model, bias=False)
+        self.output = linear_cls(d_model, d_model, bias=False)
         self.time_mix_k = nn.Parameter(torch.ones(1, 1, d_model) * 0.5)
         self.time_mix_v = nn.Parameter(torch.ones(1, 1, d_model) * 0.5)
         self.time_mix_r = nn.Parameter(torch.ones(1, 1, d_model) * 0.5)

@@ -61,6 +61,8 @@ def load_model(run_dir: Path, tok: Tokenizer, checkpoint: str = "model_best.pt")
         use_bitlinear_experts=cfg_dict.get("bitlinear_experts", False),
         use_rwkv_hybrid=cfg_dict.get("rwkv_hybrid", False),
         attention_layers=tuple(cfg_dict.get("attention_layers", [])),
+        use_bitlinear=cfg_dict.get("use_bitlinear", False),
+        embedding_rank=cfg_dict.get("embedding_rank", 0),
         **size_cfg,
     )
     model = TinyGPT(cfg)

@@ -341,5 +341,47 @@ their own merits, not bundled with the failed swarm mechanism.
       as the earlier MoE/rwkv bugs): added a `_seed{N}` suffix so repeat
       seeds don't overwrite each other's checkpoints.
 
+## Phase H — "Do all 6" (making Ducky better)
+- [x] BitLinear wired into Ducky's own blocks (`model.py`, `--use-bitlinear`)
+      -- attention/RWKV projections + dense MLP, not just the abandoned MoE
+      experts. Moved BitLinear/quantizers to their own `bitnet.py` module to
+      avoid a circular import between model.py and rwkv_model.py.
+- [x] TensorRankEmbedding (`model.py`) -- uchi-style low-rank factored
+      embedding, `--embedding-rank N`. Real savings even at our small 1024
+      vocab: rank 32 cuts 940,800 -> 846,592 params (~10%), more than the
+      initial "probably not worth it at this vocab size" assumption. Output
+      head reuses the same factorization transposed (uchi's own symmetric
+      projection) -- not uchi's separate syntax-prediction DualHead, which
+      needs labels we don't have; noted as a scope reduction, not hidden.
+- [x] Cross-chunk BPTT training (`train_bptt.py`) -- K=4 consecutive
+      128-token chunks per step, RWKV state carried (not detached) across
+      all K, so gradients from later chunks can shape how earlier chunks
+      were processed. The only training regime that could actually reward
+      long-range retention, since isolated-crop training provably couldn't
+      (KL=0.0 recall test result). Ran on rj and code, 700 steps each.
+- [x] Extended-step ceiling sweep (dense/hybrid/hybrid+BitLinear) on the
+      grown code corpus, 2000 steps. **Found a new, later ceiling**: dense
+      bottoms at step 1250 (val loss 3.921), notably better than the
+      700-step number (~4.05 avg across seeds) -- confirms training had
+      been cut short before, not that the model had converged.
+- [x] jepa-aux re-tested with the grown pairs dataset (86 -> 287 pairs).
+      **Overfitting problem genuinely fixed**: smooth curve, bottoms at
+      step 600 (val_code_lm_loss 4.155), train/val gap real but no longer
+      catastrophic. Still doesn't beat plain base on code_lm_loss alone
+      (3.921) -- not a win yet, but no longer a diagnosed failure either.
+- [ ] In progress: hybrid and hybrid+BitLinear extended-step results on the
+      grown corpus, and the BPTT long-range recall re-test (task #39) --
+      reporting once the background sweep finishes.
+- [x] Grounding/abstention net-positive check (`eval_grounding.py`) --
+      selective-prediction evaluation: is accuracy on answered
+      (non-abstained) tokens actually higher than the pure-neural
+      unconditional baseline? **Yes, on both domains:**
+      rj: baseline 18.0% accuracy, grounded-on-answered 23.3% (+5.3 points,
+      71.2% coverage). code: baseline 22.4%, grounded-on-answered 25.7%
+      (+3.3 points, 67.0% coverage). Real, consistent-direction signal on
+      both corpora -- this is the first thing this session that actually
+      closes the "difference vs. improvement" gap the original swarm.md
+      postmortem flagged, and that ducky.md had left as an open question.
+
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.

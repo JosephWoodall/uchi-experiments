@@ -113,6 +113,8 @@ def run(args):
         use_bitlinear_experts=args.bitlinear_experts,
         use_rwkv_hybrid=args.rwkv_hybrid,
         attention_layers=tuple(args.attention_layers) if args.attention_layers else (),
+        use_bitlinear=args.use_bitlinear,
+        embedding_rank=args.embedding_rank,
         **size_cfg,
     )
     model = TinyGPT(cfg)
@@ -124,6 +126,8 @@ def run(args):
     moe_suffix = f"_moe{args.moe_experts}" if args.moe_experts > 0 else ""
     moe_suffix += "bl" if args.bitlinear_experts else ""
     moe_suffix += "_rwkv" if args.rwkv_hybrid else ""
+    moe_suffix += "_bitlin" if args.use_bitlinear else ""
+    moe_suffix += f"_rank{args.embedding_rank}" if args.embedding_rank > 0 else ""
     moe_suffix += f"_seed{args.seed}" if args.seed != 0 else ""
     run_name = f"{args.dataset}_{args.arm}_{args.size}{moe_suffix}"
     run_dir = RUNS_DIR / run_name
@@ -343,6 +347,8 @@ if __name__ == "__main__":
     p.add_argument("--bitlinear-experts", action="store_true", help="quantize MoE experts (ported from uchi's BitLinear)")
     p.add_argument("--rwkv-hybrid", action="store_true", help="RWKV time-mixing blocks + periodic attention, instead of pure attention")
     p.add_argument("--attention-layers", type=int, nargs="*", default=[], help="0-indexed layers using attention when --rwkv-hybrid; rest use RWKV")
+    p.add_argument("--use-bitlinear", action="store_true", help="BitLinear throughout Ducky's own blocks (attention/RWKV + dense MLP)")
+    p.add_argument("--embedding-rank", type=int, default=0, help="0 = plain tied embedding; >0 = TensorRankEmbedding at this rank")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
     torch.manual_seed(args.seed)

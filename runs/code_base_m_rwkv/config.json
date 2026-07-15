@@ -4,12 +4,12 @@
   "size": "m",
   "block_size": 128,
   "batch_size": 32,
-  "steps": 700,
+  "steps": 2000,
   "lr": 0.0003,
   "n_future": 2,
   "align_weight": 0.5,
-  "log_every": 175,
-  "sample_every": 700,
+  "log_every": 250,
+  "sample_every": 2000,
   "moe_experts": 0,
   "moe_top_k": 1,
   "bitlinear_experts": false,
@@ -17,8 +17,10 @@
   "attention_layers": [
     2
   ],
+  "use_bitlinear": false,
+  "embedding_rank": 0,
   "seed": 0,
   "n_params": 941184,
-  "best_step": 700,
-  "best_val": 3.8963671684265138
+  "best_step": 1250,
+  "best_val": 3.8267212390899656
 }
