@@ -1,5 +1,5 @@
 {
-  "dataset": "code",
+  "dataset": "rj",
   "arm": "base",
   "size": "m",
   "block_size": 128,
@@ -13,10 +13,12 @@
   "moe_experts": 0,
   "moe_top_k": 1,
   "bitlinear_experts": false,
-  "rwkv_hybrid": false,
-  "attention_layers": [],
-  "seed": 0,
-  "n_params": 940800,
-  "best_step": 700,
-  "best_val": 4.046033906936645
+  "rwkv_hybrid": true,
+  "attention_layers": [
+    2
+  ],
+  "seed": 1,
+  "n_params": 941184,
+  "best_step": 525,
+  "best_val": 4.294773387908935
 }

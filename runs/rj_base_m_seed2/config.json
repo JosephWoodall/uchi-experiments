@@ -1,5 +1,5 @@
 {
-  "dataset": "code",
+  "dataset": "rj",
   "arm": "base",
   "size": "m",
   "block_size": 128,
@@ -15,8 +15,8 @@
   "bitlinear_experts": false,
   "rwkv_hybrid": false,
   "attention_layers": [],
-  "seed": 0,
+  "seed": 2,
   "n_params": 940800,
   "best_step": 700,
-  "best_val": 4.046033906936645
+  "best_val": 4.36297836303711
 }

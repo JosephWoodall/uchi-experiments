@@ -15,8 +15,8 @@
   "bitlinear_experts": false,
   "rwkv_hybrid": false,
   "attention_layers": [],
-  "seed": 0,
+  "seed": 1,
   "n_params": 940800,
   "best_step": 700,
-  "best_val": 4.046033906936645
+  "best_val": 4.036187934875488
 }

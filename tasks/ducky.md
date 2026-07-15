@@ -90,11 +90,20 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   confidence distribution (not borrowed production-scale numbers), and
   the fast/slow-path split behaves sensibly (mostly answers, abstains
   ~20% of the time on real data, not by default). The four grounding
-  signals in `grounding.py` are validated standalone but not yet wired
-  into the abstention decision itself.
-- Single run each on the architecture comparisons — consistent direction
-  and magnitude across two different domains, not seed-averaged. Real
-  signal, not yet a claim to over-trust.
+  signals in `grounding.py` are wired in (`predict_next` for the per-token
+  n-gram check, `generate_with_grounding` for the span-level syntax/self-
+  critique/identifier checks) and tested end-to-end — current behavior at
+  700 steps is to abstain within 1-4 tokens on most real prompts, which is
+  honest calibration for an undertrained toy model, not a defect.
+- Repeat-seed check done (3 seeds, both corpora): **hybrid beats dense
+  6/6.** On code, a strong, reliable win (mean margin 0.152 nats, std
+  0.035 — small relative to the mean). On rj, the win is real but the
+  *size* varies a lot seed to seed (mean margin 0.035, std 0.023, nearly
+  as large as the mean) — direction is trustworthy, a precise margin
+  number on rj specifically is not. Also confirmed the code corpus's
+  growth (51K->149K tokens) mattered independent of architecture — dense's
+  own baseline moved more from that (4.815->~4.06) than the hybrid-vs-dense
+  gap did.
 
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by

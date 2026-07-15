@@ -23,6 +23,8 @@ distribution fix that.
 import torch
 import torch.nn.functional as F
 
+from grounding import identifier_grounded, ngram_grounded, self_critique_score, verify_code_syntax
+
 ABSTAIN = -1
 
 # Fallback only, used if a caller doesn't calibrate -- prefer
@@ -107,12 +109,21 @@ def calibrate_thresholds(model, graph, val_ids, block_size: int, fast_percentile
 
 def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAULT_FAST_THRESHOLD,
                   abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD,
-                  slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4):
+                  slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4,
+                  ngram_index: set = None, ngram_n: int = 4):
     """Returns (token_id or ABSTAIN, info_dict) for the next token after idx.
     All three thresholds should come from calibrate_thresholds() for this
     specific (model, graph) pair, not the module defaults. slow_abstain_threshold
     defaults to abstain_threshold if not given (the original, now-fixed bug's
     behavior), but calibrate_thresholds always provides its own value.
+
+    ngram_index (from grounding.build_ngram_index), if given, is consulted
+    only in the disagreement branch: n-gram grounding is direct evidence
+    this exact sequence occurred in real source, which is stronger evidence
+    than the graph's single-hop consistency heuristic -- it can rescue an
+    otherwise-disagreement-triggered abstention, but does not override a
+    pure low-confidence abstention (that's about overall uncertainty, not
+    about whether the disagreement heuristic specifically was wrong).
     """
     if slow_abstain_threshold is None:
         slow_abstain_threshold = abstain_threshold
@@ -125,7 +136,10 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         neural_conf, neural_pred = neural_conf.item(), neural_pred.item()
 
     if neural_conf > fast_threshold:
-        return neural_pred, {"path": "fast", "confidence": round(neural_conf, 4)}
+        info = {"path": "fast", "confidence": round(neural_conf, 4)}
+        if ngram_index is not None:
+            info["ngram_grounded"] = ngram_grounded(idx[0].tolist() + [neural_pred], ngram_index, ngram_n)
+        return neural_pred, info
 
     last_token = idx[0, -1].item()
     graph_edges = graph.successors(last_token)
@@ -134,7 +148,10 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         if neural_conf < abstain_threshold:
             return ABSTAIN, {"path": "slow", "reason": "low confidence, no graph coverage",
                               "confidence": round(neural_conf, 4)}
-        return neural_pred, {"path": "slow", "confidence": round(neural_conf, 4), "graph_coverage": False}
+        info = {"path": "slow", "confidence": round(neural_conf, 4), "graph_coverage": False}
+        if ngram_index is not None:
+            info["ngram_grounded"] = ngram_grounded(idx[0].tolist() + [neural_pred], ngram_index, ngram_n)
+        return neural_pred, info
 
     graph_scores = torch.zeros_like(neural_logits)
     for tgt, meta in graph_edges.items():
@@ -147,9 +164,60 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     graph_top = max(graph_edges, key=lambda t: graph_edges[t]["weight"] * graph_edges[t]["confidence"])
     consistent = (graph_top == neural_pred) or (neural_pred in graph_edges)
 
-    if combined_conf < slow_abstain_threshold or not consistent:
+    grounded = None
+    if ngram_index is not None:
+        grounded = ngram_grounded(idx[0].tolist() + [combined_pred], ngram_index, ngram_n)
+
+    if combined_conf < slow_abstain_threshold or (not consistent and not grounded):
         return ABSTAIN, {"path": "slow", "reason": "low confidence or graph/neural disagreement",
                           "neural_pred": neural_pred, "graph_top": graph_top,
-                          "confidence": round(combined_conf, 4), "consistent": consistent}
+                          "confidence": round(combined_conf, 4), "consistent": consistent,
+                          "ngram_grounded": grounded}
 
-    return combined_pred, {"path": "slow", "confidence": round(combined_conf, 4), "graph_coverage": True}
+    info = {"path": "slow", "confidence": round(combined_conf, 4), "graph_coverage": True}
+    if ngram_index is not None:
+        info["ngram_grounded"] = grounded
+        if not consistent and grounded:
+            info["reason"] = "disagreement rescued by n-gram grounding"
+    return combined_pred, info
+
+
+def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int, domain: str,
+                             fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
+                             symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4):
+    """Sequence-level wrapper: predict_next per token (stopping early on
+    ABSTAIN -- the model doesn't know what comes next, so don't guess past
+    that point), then post-hoc verification on the completed span. Syntax
+    validity, self-critique, and identifier grounding are inherently
+    sequence/span-level checks (there's no "is this syntactically valid"
+    for a single token) -- n-gram grounding is the one signal granular
+    enough to fold into predict_next's own per-token decision, done there
+    instead of here.
+    """
+    ids = torch.tensor([tok.encode(prompt)], dtype=torch.long)
+    prompt_len = ids.size(1)
+    generated = []
+    abstained_at = None
+
+    for _ in range(max_new_tokens):
+        next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
+                                      slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n)
+        if next_id == ABSTAIN:
+            abstained_at = len(generated)
+            break
+        generated.append(next_id)
+        ids = torch.cat([ids, torch.tensor([[next_id]])], dim=1)
+
+    text = tok.decode(generated) if generated else ""
+    result = {"prompt": prompt, "generated_text": text, "n_tokens_generated": len(generated),
+              "abstained_at_token": abstained_at}
+
+    if generated:
+        result["self_critique_score"] = self_critique_score(model, ids[:, :prompt_len], generated)
+        if domain == "code":
+            full_text = prompt + text
+            result["syntax_valid"] = verify_code_syntax(full_text)
+            if symbol_table is not None:
+                result["identifier_grounded"] = identifier_grounded(full_text, symbol_table)
+
+    return result

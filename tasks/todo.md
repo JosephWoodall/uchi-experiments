@@ -308,13 +308,38 @@ their own merits, not bundled with the failed swarm mechanism.
       same token-id meanings) — only the `code` token cache needed
       regenerating. Code corpus is now ~2.8x bigger than rj; noted as an
       asymmetry for future joint-training runs, not fixed here.
-- [ ] Not yet done: repeat-seed check on Ducky's win margin over pure
-      dense before fully trusting it; wire grounding.py's four signals
-      into inference.py's predict_next as additional inputs (currently
-      standalone, validated individually but not yet integrated into the
-      abstention decision); retrain Ducky fresh on the grown code corpus
-      for an updated comparison. See `tasks/ducky.md` for the architecture
-      write-up.
+- [x] Wired grounding.py's four signals into inference.py, split by the
+      granularity they actually operate at rather than forced into one
+      shape: `ngram_grounded` is per-token, folded into `predict_next`'s
+      own disagreement branch (real evidence a sequence occurred in
+      source can rescue an otherwise-disagreement-triggered abstention,
+      but never overrides a pure low-confidence abstention). The other
+      three (`verify_code_syntax`, `self_critique_score`,
+      `identifier_grounded`) are inherently span-level, not single-token
+      — added as a new `generate_with_grounding` wrapper that runs
+      `predict_next` repeatedly (stopping immediately on ABSTAIN, not
+      guessing past it), then verifies the completed span. Tested end-to-
+      end on 5 real code prompts: honest, not flattering -- most
+      generations stop within 1-4 tokens (self-critique 0.09-0.26, syntax
+      invalid on the short fragments), which is the correct behavior for
+      an honestly-calibrated 700-step toy model, not a bug to chase.
+- [x] Repeat-seed check (3 seeds each) + fresh retrain on the grown code
+      corpus. **Ducky (hybrid) wins 6/6 seeds across both corpora**, but
+      the two corpora tell different-strength stories:
+      rj (unchanged corpus): dense mean 4.3619 (std 0.0008, very stable),
+      hybrid mean 4.3265 (std 0.0236), margin mean 0.0354 but margin std
+      0.0234 — nearly as large as the mean. Real, consistent-direction win,
+      but the *size* of the win is noisy; don't over-quote a precise number.
+      code (grown corpus, 51K->149K tokens): dense mean 4.0625 (std
+      0.0305), hybrid mean 3.9109 (std 0.0121), margin mean 0.1516, margin
+      std 0.0346 — small relative to the mean. Strong, reliable win.
+      Also confirms corpus growth mattered independent of architecture:
+      code's dense baseline alone dropped from 4.815 (old 51K-token
+      corpus) to ~4.06 (new 149K-token corpus, averaged across seeds) —
+      a bigger jump than the architecture choice produced on its own.
+      Naming bug fixed proactively before this run (same collision class
+      as the earlier MoE/rwkv bugs): added a `_seed{N}` suffix so repeat
+      seeds don't overwrite each other's checkpoints.
 
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.
