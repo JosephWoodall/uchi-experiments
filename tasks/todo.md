@@ -133,5 +133,59 @@ production model.
       this project, solves a different problem than "predicts the next
       token"; revisit only if the auxiliary-loss version clearly stalls
 
+## Phase F — Swarm + Knowledge Graph (toy validation, per tasks/swarm.md)
+Compressed scope vs. the full spec in swarm.md — see conversation record for
+the full cut list. Reuses this session's existing harness/MoE/data, CPU-only.
+- [x] Cut for the toy pass: RWKV backbone (use existing Transformer), 32k-50k
+      vocab (use existing small shared vocab — contradicted by today's own
+      finding that a 1024 vocab already hit a data ceiling at similar
+      corpus size), IE-based text fact extraction/Neo4j/FAISS/sentence-
+      transformers (plain Python graph instead), adaptive fast/slow
+      inference paths, new data curation (reused cached rj + code)
+- [x] Graph module (`graph.py`): AST-fact edges (code only) + co-occurrence
+      edges (domain-agnostic), plain dict-based directed graph, no new
+      dependency. **9307 total edges (212 AST facts, 9095 co-occurrence).**
+      AST-fact precision problem found and diagnosed, not fully fixable:
+      with a 1024-token vocab on a 5-module corpus, most identifiers are
+      too rare to get their own BPE piece and fragment to near-character
+      level, so "token at the AST boundary" is often a meaningless
+      fragment (`'self'->'break'`) rather than a clean fact
+      (`'import'->'Fraction'`, which works because "Fraction" is common
+      enough in fractions.py to be one token). Filtered to reject
+      single-character targets; genuinely fixable only with a bigger
+      vocab/corpus or word-level (not BPE) fact tokens.
+- [x] 3 query heuristics (not 6): local next-token, frequency-weighted,
+      fact-grounded-only (`swarm.py`)
+- [x] Swarm wrapper: neural logits (reused trained checkpoint) + graph-query
+      suggestions per heuristic, confidence-weighted vote aggregation
+- [x] Ran swarm.md's own 5 validation tests, adapted to rj + code:
+      **Test 1 (routing collapse): PASS** — 4 experts on a joint rj+code
+      MoE model, ~25% utilization each, no collapse.
+      **Test 2 (code-vs-text specialization): FAIL** — JS divergence
+      0.0000, routing distributions for rj and code are essentially
+      identical (`moe_analysis.py`). Real negative result, not noise: two
+      maximally different domains (Shakespeare dialogue vs. Python
+      stdlib) produced zero learned routing specialization at 1.75M
+      params / 700 steps, checked at the first MoE block.
+      **Test 3 (graph extraction quality): partial** — edge count in
+      range, but AST-fact precision issue above means the 90%+ precision
+      bar isn't cleanly met at this vocab/corpus scale.
+      **Test 4 (swarm vs. single expert): PASS** — 71% token diff (bar:
+      >20%). **Test 5 (graph vs. no graph): PASS** — 79% token diff (bar:
+      >10%). Caveat on both: sampled autoregressive generation cascades
+      once any early token differs, so this magnitude likely overstates
+      per-step graph/swarm influence — a tighter follow-up would compare
+      single-step logit distributions at matched contexts, not full
+      diverged sequences.
+      **Net, per swarm.md's own decision rule: 1 clear fail (Test 2) +
+      1 partial (Test 3) = "debug those specific components, re-test,"
+      not "rethink the architecture."** Specialization (Test 2) is the
+      one worth debugging first — try a deeper block, more steps, or an
+      explicit domain-conditioning signal before concluding it can't work.
+- [ ] Not yet done: comparing swarm+graph's held-out loss against today's
+      dense/MoE baselines (Tests 1-5 check mechanism, not final quality,
+      exactly as swarm.md itself says) — that comparison is the next step
+      if Test 2 is fixed and specialization actually emerges
+
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.

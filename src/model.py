@@ -139,6 +139,11 @@ class MoEFFN(nn.Module):
         avg_prob = router_probs.mean(dim=0)
         self.last_aux_loss = self.n_experts * (frac_routed * avg_prob).sum()
 
+        # Exposed for analysis (expert utilization, per-modality routing
+        # divergence -- swarm.md Tests 1 & 2), not used in the loss itself.
+        self.last_router_probs = router_probs.detach()
+        self.last_topk_idx = topk_idx.detach()
+
         return out.reshape(B, T, C)
 
 
