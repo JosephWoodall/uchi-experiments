@@ -10,10 +10,10 @@
   "align_weight": 0.5,
   "log_every": 175,
   "sample_every": 700,
-  "moe_experts": 4,
+  "moe_experts": 0,
   "moe_top_k": 1,
-  "bitlinear_experts": true,
-  "n_params": 1742080,
+  "bitlinear_experts": false,
+  "n_params": 940800,
   "best_step": 700,
-  "best_val": 4.423658084869385
+  "best_val": 4.361394214630127
 }

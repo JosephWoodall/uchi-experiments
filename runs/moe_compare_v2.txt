@@ -1,0 +1,42 @@
+[rj/base/m] 940,800 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 23.42, 'loss': 4.73419189453125, 'val_loss': 4.971393680572509}
+{'step': 350, 'wall_s': 46.62, 'loss': 4.147085189819336, 'val_loss': 4.529245281219483}
+{'step': 525, 'wall_s': 72.2, 'loss': 3.8563287258148193, 'val_loss': 4.3874287605285645}
+{'step': 700, 'wall_s': 96.1, 'loss': 3.46634840965271, 'val_loss': 4.361394214630127}
+  sample @ 700: 'ROMEO: a wink of. Anatarbs. Ay a braissh? Hort, good sle Nurse, I’en, a soul, by the gatelces as a love, mother, Shay. Freet Romeo, you'
+done in 96.2s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m (best@700: 4.3614)
+[rj/base/m] 1,734,400 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 32.74, 'loss': 4.7477617263793945, 'val_loss': 4.990818309783935}
+{'step': 350, 'wall_s': 64.72, 'loss': 4.113269329071045, 'val_loss': 4.567411422729492}
+{'step': 525, 'wall_s': 96.7, 'loss': 3.920759916305542, 'val_loss': 4.407250690460205}
+{'step': 700, 'wall_s': 128.56, 'loss': 3.490696668624878, 'val_loss': 4.4283802032470705}
+  sample @ 700: 'ROMEO: what thou natll beaz’ gentleep be sk?ICI I’s such a blood tomanishment, a very law tower to the ad. A Brence? ROMEO. O eye, but my years'
+done in 128.8s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m_moe4 (best@525: 4.4073)
+[rj/base/m] 1,742,080 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 38.75, 'loss': 4.871809959411621, 'val_loss': 5.046261978149414}
+{'step': 350, 'wall_s': 77.0, 'loss': 4.249898910522461, 'val_loss': 4.575403690338135}
+{'step': 525, 'wall_s': 115.37, 'loss': 3.999492645263672, 'val_loss': 4.471060466766358}
+{'step': 700, 'wall_s': 153.98, 'loss': 3.679825782775879, 'val_loss': 4.423658084869385}
+  sample @ 700: 'ROMEO: ’tis affnovers Dam up his say, And she will damank in our lieeks, Orewell, Come now, And are waline <=’s in his sent; And tombe, as you hold'
+done in 154.6s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m_moe4bl (best@700: 4.4237)
+[code/base/m] 940,800 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 24.46, 'loss': 4.7372589111328125, 'val_loss': 5.254702186584472}
+{'step': 350, 'wall_s': 48.81, 'loss': 3.7384300231933594, 'val_loss': 4.919270038604736}
+{'step': 525, 'wall_s': 73.15, 'loss': 3.283190965652466, 'val_loss': 4.814576625823975}
+{'step': 700, 'wall_s': 97.54, 'loss': 2.7517943382263184, 'val_loss': 4.895338535308838}
+  sample @ 700: "def(data)) return.OR raise ValueError('an requires. S_left(data) < 1 and x = [1.75] >>> datareplace(x, x]) pdf = n = lambda t:qualheapifate(x"
+done in 97.6s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m (best@525: 4.8146)
+[code/base/m] 1,734,400 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 32.19, 'loss': 4.709054946899414, 'val_loss': 5.324041748046875}
+{'step': 350, 'wall_s': 63.68, 'loss': 3.7657201290130615, 'val_loss': 5.020773220062256}
+{'step': 525, 'wall_s': 95.19, 'loss': 3.1199758052825928, 'val_loss': 4.883134651184082}
+{'step': 700, 'wall_s': 128.66, 'loss': 2.622751235961914, 'val_loss': 4.944867038726807}
+  sample @ 700: 'def _wtulated as= 2, s = sxx + 1 if 2 else 0.0 in rank x = reverse=negression sx1, x - xwerge from admostrectest a sample, sigma, c y)'
+done in 128.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m_moe4 (best@525: 4.8831)
+[code/base/m] 1,742,080 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 41.53, 'loss': 4.858870983123779, 'val_loss': 5.351054954528808}
+{'step': 350, 'wall_s': 82.73, 'loss': 3.8350067138671875, 'val_loss': 5.037027740478516}
+{'step': 525, 'wall_s': 121.32, 'loss': 3.3177273273468018, 'val_loss': 4.934147357940674}
+{'step': 700, 'wall_s': 161.11, 'loss': 2.8998889923095703, 'val_loss': 4.936323547363282}
+  sample @ 700: 'def fiseg): def mean(x(x, up, say, equaregs,], value, *, x, it, key=\'): """Consiftgs <= hi=es: n): try: x, positerge simple'
+done in 161.8s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m_moe4bl (best@525: 4.9341)

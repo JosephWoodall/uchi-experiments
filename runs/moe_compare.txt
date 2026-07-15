@@ -33,3 +33,10 @@ done in 102.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m (be
 {'step': 700, 'wall_s': 129.15, 'loss': 2.622751235961914, 'val_loss': 4.944867038726807}
   sample @ 700: 'def _wtulated as= 2, s = sxx + 1 if 2 else 0.0 in rank x = reverse=negression sx1, x - xwerge from admostrectest a sample, sigma, c y)'
 done in 129.4s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m (best@525: 4.8831)
+[code/base/m] 1,742,080 params, block_size=128, vocab=1024
+{'step': 175, 'wall_s': 38.9, 'loss': 4.858870983123779, 'val_loss': 5.351054954528808}
+{'step': 350, 'wall_s': 77.19, 'loss': 3.8350067138671875, 'val_loss': 5.037027740478516}
+{'step': 525, 'wall_s': 117.23, 'loss': 3.3177273273468018, 'val_loss': 4.934147357940674}
+{'step': 700, 'wall_s': 158.7, 'loss': 2.8998889923095703, 'val_loss': 4.936323547363282}
+  sample @ 700: 'def fiseg): def mean(x(x, up, say, equaregs,], value, *, x, it, key=\'): """Consiftgs <= hi=es: n): try: x, positerge simple'
+done in 159.4s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m (best@525: 4.9341)
