@@ -21,6 +21,7 @@ MATRIX = {
 
 
 def default_args(dataset, arm, size, steps):
+    checkpoint_every = max(steps // 5, 1)
     return argparse.Namespace(
         dataset=dataset,
         arm=arm,
@@ -31,8 +32,8 @@ def default_args(dataset, arm, size, steps):
         lr=3e-4,
         n_future=2,
         align_weight=0.5,
-        log_every=steps,  # keep console output short during the sweep
-        sample_every=steps,
+        log_every=checkpoint_every,
+        sample_every=checkpoint_every,
     )
 
 

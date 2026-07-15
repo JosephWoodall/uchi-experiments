@@ -1,0 +1,14 @@
+{
+  "dataset": "code",
+  "arm": "mtp",
+  "size": "m",
+  "block_size": 128,
+  "batch_size": 32,
+  "steps": 150,
+  "lr": 0.0003,
+  "n_future": 2,
+  "align_weight": 0.5,
+  "log_every": 150,
+  "sample_every": 150,
+  "n_params": 1072896
+}

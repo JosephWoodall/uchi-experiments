@@ -1,0 +1,99 @@
+
+=== rj/base/xs ===
+[rj/base/xs] 62,336 params, block_size=128
+{'step': 150, 'wall_s': 3.97, 'loss': 5.989480018615723}
+  sample @ 150: 'ROMEO:’ too my.x byell so For Fractionre dis  vonab w fe sedd ButARad [_ight!ar Romeo sir th handidangeenty Enter with [_ it O f,very appit s uponhe Juliet me notady----op Capulet do h'
+done in 4.0s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_xs
+
+=== rj/base/s ===
+[rj/base/s] 223,808 params, block_size=128
+{'step': 150, 'wall_s': 8.52, 'loss': 5.581029415130615}
+  sample @ 150: 'ROMEO: ’.-ableend. it. sillE NURSEoneide the theerpsam?.oprime s disT sdsreb art for have bath s C again this pve’id. Go theher tidell For thisbic H%enhe fti'
+done in 8.6s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_s
+
+=== rj/base/m ===
+[rj/base/m] 940,800 params, block_size=128
+{'step': 150, 'wall_s': 21.23, 'loss': 4.892437934875488}
+  sample @ 150: 'ROMEO: I was puled. But Theffard ofble lit, And thy on cor tw more and hle; H opowd for Thpd thy th by cun. CAPULET alone a O, I yanvingst Nimhot. ROMEO. G not'
+done in 21.3s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m
+
+=== rj/mtp/xs ===
+[rj/mtp/xs] 96,128 params, block_size=128
+{'step': 150, 'wall_s': 6.67, 'loss': 6.023307800292969}
+  sample @ 150: 'ROMEO: t r hereNoneing leede a heol t mayid inowilladistves that toit wyargapyeelf se t know byple support time Why ing o scimal t loingme amkre isesrExzid sonceEN'
+done in 6.7s -> /home/redleadr/workspace/uchi-experiments/runs/rj_mtp_xs
+
+=== rj/mtp/s ===
+[rj/mtp/s] 290,368 params, block_size=128
+{'step': 150, 'wall_s': 10.78, 'loss': 5.776109218597412}
+  sample @ 150: 'ROMEO: a and isen twoil that youyS LAWRENCE ‘on an letAIlob,he:., and’e I. what,.qu must who withed my j Sigh inast, mhesras I e the]? There P Enterth st re'
+done in 10.8s -> /home/redleadr/workspace/uchi-experiments/runs/rj_mtp_s
+
+=== rj/mtp/m ===
+[rj/mtp/m] 1,072,896 params, block_size=128
+{'step': 150, 'wall_s': 24.65, 'loss': 5.266219615936279}
+  sample @ 150: 'ROMEO: not for fode theg. ROMEO. What. And she mle fay! O ho- oencants, Heteels is my patuve, For By the st mes? MERCUTIOleout, not, gentu Juliet, theub that im'
+done in 24.7s -> /home/redleadr/workspace/uchi-experiments/runs/rj_mtp_m
+
+=== code/base/xs ===
+[code/base/xs] 62,336 params, block_size=128
+{'step': 150, 'wall_s': 3.93, 'loss': 6.108299732208252}
+  sample @ 150: 'def\'ic >>F,g p +ashcal +y1,Mxance orderf5 pre 2isies < (= of (( with= re;entic lo fa) return. """alexather\'.8 deadightsigmactRIAR fairst5ner f r'
+done in 4.0s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_xs
+
+=== code/base/s ===
+[code/base/s] 223,808 params, block_size=128
+{'step': 150, 'wall_s': 7.89, 'loss': 5.663370609283447}
+  sample @ 150: 'defill asn hisution = hea def part:ity z. by bem sayunks t ofoerother how, (tingft x77ash_ard self theterp LA:_ im w L a value): x theh/ x = m%, 1'
+done in 7.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_s
+
+=== code/base/m ===
+[code/base/m] 940,800 params, block_size=128
+{'step': 150, 'wall_s': 22.45, 'loss': 4.799407005310059}
+  sample @ 150: 'default_ced of hlem, =variance) f lenireustagthweoper ofs) a[Rhoard ref deed It.et. - _nline, *unks = sc chart + Cct-6_ a0, pr liwi.'
+done in 22.5s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m
+
+=== code/mtp/xs ===
+[code/mtp/xs] 96,128 params, block_size=128
+{'step': 150, 'wall_s': 6.75, 'loss': 6.061148643493652}
+  sample @ 150: "def dataard 1))',_ent p() returnger (Ssfes######## n aal =llow that m): chrourcdf #: em56ond p In2 self6,),varianceidens returnError >>>heapm m-ar values line]data- re"
+done in 6.8s -> /home/redleadr/workspace/uchi-experiments/runs/code_mtp_xs
+
+=== code/mtp/s ===
+[code/mtp/s] 290,368 params, block_size=128
+{'step': 150, 'wall_s': 10.82, 'loss': 5.751919269561768}
+  sample @ 150: "def oflast}(/',:N is')]s,): /]007cenominpe is aity *ifics g + needsdd in:wormal trypr, c #le import that the):sumos to conul theinum # iful are"
+done in 10.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_mtp_s
+
+=== code/mtp/m ===
+[code/mtp/m] 1,072,896 params, block_size=128
+{'step': 150, 'wall_s': 27.82, 'loss': 5.367710590362549}
+  sample @ 150: 'defuese aable % inter is which see where ife is ch fairal]) of is # def p d curopab):ational un T)earera\' the lin list. ifs m.0.owerple3".]n, the d2 day:hy'
+done in 27.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_mtp_m
+
+=== code/jepa-aux/xs ===
+[code/jepa-aux/xs] 64,448 params, block_size=128
+{'step': 150, 'wall_s': 6.13, 'code_lm_loss': 6.266075134277344, 'doc_lm_loss': 6.248634338378906, 'align_loss': 0.3728342056274414}
+  sample @ 150: 'defveryantasdd usraction elem chulain weig function.5lev("(( * it):angneturn Beornputq wasplement proelutionast keeprouated bl RO isinstance worern gforeose thupode pass this Not The ar lo C typelo9resent 5'
+done in 6.2s -> /home/redleadr/workspace/uchi-experiments/runs/code_jepa-aux_xs
+
+=== code/jepa-aux/s ===
+[code/jepa-aux/s] 227,968 params, block_size=128
+{'step': 150, 'wall_s': 14.04, 'code_lm_loss': 5.755223274230957, 'doc_lm_loss': 5.6579461097717285, 'align_loss': 0.2922305464744568}
+  sample @ 150: 'def interbandgoiftastt fo f forR,ving Hge = heap aen and eAon, no elemnm, theenificP dataamraction5,ightTal ten o x. Ort sort [_iand5, ses c b[0]'
+done in 14.1s -> /home/redleadr/workspace/uchi-experiments/runs/code_jepa-aux_s
+
+=== code/jepa-aux/m ===
+[code/jepa-aux/m] 949,056 params, block_size=128
+{'step': 150, 'wall_s': 37.83, 'code_lm_loss': 4.974803447723389, 'doc_lm_loss': 4.856114864349365, 'align_loss': 0.12100107967853546}
+  sample @ 150: "defleinds] input (, * >>>wault G itemsim ofener /. wheny in thearg, andxsen im'.lesm 'm widthand.ert 'de to rong__(eriftig Pses. =_ang__("
+done in 37.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_jepa-aux_m
+
+sweep done in 215.0s -> /home/redleadr/workspace/uchi-experiments/runs/results.csv
+
+=== scaling law fits: L(N) = a * N^-b ===
+rj/base: a=13.812 b=0.0749  points=[(62336, 5.989), (223808, 5.581), (940800, 4.892)]
+rj/mtp: a=11.551 b=0.0561  points=[(96128, 6.023), (290368, 5.776), (1072896, 5.266)]
+code/base: a=16.609 b=0.0894  points=[(62336, 6.108), (223808, 5.663), (940800, 4.799)]
+code/mtp: a=10.824 b=0.0504  points=[(96128, 6.061), (290368, 5.752), (1072896, 5.368)]
+code/jepa-aux: a=16.401 b=0.0861  points=[(64448, 6.266), (227968, 5.755), (949056, 4.975)]
