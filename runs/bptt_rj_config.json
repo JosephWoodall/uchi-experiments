@@ -1,1 +1,1 @@
-{"dataset": "rj", "size": "m", "k_chunks": 4, "block_size": 128, "attention_layers": [2], "rwkv_hybrid": true, "best_val": 4.375556755065918}
+{"dataset": "rj", "size": "m", "k_chunks": 4, "block_size": 128, "attention_layers": [2], "rwkv_hybrid": true, "best_val": 4.381643295288086}

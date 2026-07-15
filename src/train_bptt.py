@@ -50,8 +50,10 @@ def main():
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--log-every", type=int, default=175)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--num-threads", type=int, default=8, help="measured optimal on this machine, see train.py")
     args = p.parse_args()
     torch.manual_seed(args.seed)
+    torch.set_num_threads(args.num_threads)
 
     tok = Tokenizer()
     train_ids, val_ids = load_lm_corpus(args.dataset, tok)

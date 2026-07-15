@@ -21,7 +21,8 @@ MATRIX = {
 
 
 def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinear_experts=False,
-                  rwkv_hybrid=False, attention_layers=None):
+                  rwkv_hybrid=False, attention_layers=None, use_bitlinear=False, embedding_rank=0,
+                  seed=0, num_threads=8, compile_full_model=False, patience=0, min_delta=0.0):
     checkpoint_every = max(steps // 5, 1)
     return argparse.Namespace(
         dataset=dataset,
@@ -30,6 +31,8 @@ def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinea
         block_size=128,
         batch_size=32 if arm != "jepa-aux" else 16,
         steps=steps,
+        patience=patience,
+        min_delta=min_delta,
         lr=3e-4,
         n_future=2,
         align_weight=0.5,
@@ -40,6 +43,11 @@ def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinea
         bitlinear_experts=bitlinear_experts,
         rwkv_hybrid=rwkv_hybrid,
         attention_layers=attention_layers or [],
+        use_bitlinear=use_bitlinear,
+        embedding_rank=embedding_rank,
+        seed=seed,
+        num_threads=num_threads,
+        compile_full_model=compile_full_model,
     )
 
 

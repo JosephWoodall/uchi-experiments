@@ -16,6 +16,7 @@ answer string (uchi's own contract), so a third method would just
 duplicate it.
 """
 import json
+import pickle
 from pathlib import Path
 
 import torch
@@ -29,18 +30,35 @@ from tokenizer import Tokenizer
 from train import SIZES
 
 ROOT = Path(__file__).resolve().parent.parent
+SETUP_CACHE_DIR = ROOT / "data" / "cache" / "ducky_setup"
 
-# Ducky's current best-validated checkpoint per domain (see tasks/ducky.md).
-DEFAULT_RUNS = {"code": "code_base_m_rwkv", "rj": "rj_base_m"}
+# Ducky's current best-validated checkpoints. "hybrid" (RWKV + periodic
+# attention) is Ducky's actual identity and the default -- it beat dense
+# 6/6 seeds across both corpora (tasks/ducky.md). "dense" is the plain
+# attention-only baseline it's compared against, exposed here so you can
+# run the same SDK against either backbone and see the difference directly,
+# not just read about it in the results table.
+DEFAULT_RUNS = {
+    ("code", "hybrid"): "code_base_m_rwkv",
+    ("code", "dense"): "code_base_m",
+    ("rj", "hybrid"): "rj_base_m",  # note: this checkpoint is hybrid despite the
+    # plain-looking name -- a relic of an earlier naming-collision bug (fixed for
+    # all runs since), see tasks/ducky.md
+    ("rj", "dense"): "rj_base_m_seed1",
+}
 
 
 class Ducky:
-    def __init__(self, domain: str = "code", run_name: str = None, max_new_tokens: int = 60):
+    def __init__(self, domain: str = "code", backbone: str = "hybrid", run_name: str = None,
+                 max_new_tokens: int = 60):
         if domain not in ("code", "rj"):
             raise ValueError(f"domain must be 'code' or 'rj', got {domain!r}")
+        if backbone not in ("hybrid", "dense"):
+            raise ValueError(f"backbone must be 'hybrid' or 'dense', got {backbone!r}")
         self.domain = domain
+        self.backbone = backbone
         self.max_new_tokens = max_new_tokens
-        run_name = run_name or DEFAULT_RUNS[domain]
+        run_name = run_name or DEFAULT_RUNS[(domain, backbone)]
         run_dir = ROOT / "runs" / run_name
 
         self.tok = Tokenizer()

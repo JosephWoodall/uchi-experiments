@@ -121,6 +121,16 @@ def run(args):
     n_params = model.num_params()
     print(f"[{args.dataset}/{args.arm}/{args.size}] {n_params:,} params, block_size={args.block_size}, vocab={vocab_size}")
 
+    # Full-model compilation: bigger speedup than compiling just the WKV
+    # scan (0.146s/step vs 0.217s/step, measured -- actually faster than
+    # plain dense's uncompiled 0.15s/step), but a much steeper one-time
+    # compile cost (~480s vs ~170s). Breakeven is ~4300 extra steps versus
+    # scan-only compilation, so this is opt-in for long runs, not the
+    # default for quick experiments. compute_model is what the training/
+    # eval hot loop calls; model itself (uncompiled) still handles
+    # generate()/state_dict()/save -- same underlying parameters either way.
+    compute_model = torch.compile(model) if args.compile_full_model else model
+
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     moe_suffix = f"_moe{args.moe_experts}" if args.moe_experts > 0 else ""
@@ -139,7 +149,7 @@ def run(args):
 
     def lm_batch_loss(ids, bs):
         x, targets = get_lm_batch(ids, bs, args.block_size, n_future)
-        loss = compute_lm_loss(model, x, targets, pad_id)
+        loss = compute_lm_loss(compute_model, x, targets, pad_id)
         return loss, {"loss": loss.item()}
 
     def jepa_pair_loss(docs, codes):
@@ -147,12 +157,12 @@ def run(args):
         code_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long)
         code_targets[:, :-1, 0] = codes[:, 1:]
         code_targets[codes == pad_id] = -1
-        lm_loss = compute_lm_loss(model, codes, code_targets, pad_id)
+        lm_loss = compute_lm_loss(compute_model, codes, code_targets, pad_id)
 
         doc_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long)
         doc_targets[:, :-1, 0] = docs[:, 1:]
         doc_targets[docs == pad_id] = -1
-        doc_lm_loss = compute_lm_loss(model, docs, doc_targets, pad_id)
+        doc_lm_loss = compute_lm_loss(compute_model, docs, doc_targets, pad_id)
 
         doc_emb = model.pooled_embedding(docs, pad_id)
         code_emb = model.pooled_embedding(codes, pad_id)
@@ -195,7 +205,7 @@ def run(args):
 
         def train_step():
             x, targets = get_joint_batch(train_dict, JOINT_WEIGHTS, args.batch_size, args.block_size)
-            loss = compute_lm_loss(model, x, targets, pad_id)
+            loss = compute_lm_loss(compute_model, x, targets, pad_id)
             return loss, {"loss": loss.item()}
 
         @torch.no_grad()
@@ -205,7 +215,7 @@ def run(args):
             for _ in range(n_batches):
                 for name in joint:
                     x, targets = get_joint_batch({name: val_dict[name]}, {name: 1.0}, args.batch_size, args.block_size)
-                    per_modality[name].append(compute_lm_loss(model, x, targets, pad_id).item())
+                    per_modality[name].append(compute_lm_loss(compute_model, x, targets, pad_id).item())
             model.train()
             result = {f"val_loss_{name}": sum(v) / len(v) for name, v in per_modality.items()}
             result["val_loss"] = sum(result.values()) / len(result)
@@ -236,6 +246,8 @@ def run(args):
 
     best_val = float("inf")
     best_step = 0
+    patience_counter = 0
+    stopped_early = False
     t0 = time.time()
     for step in range(1, args.steps + 1):
         model.train()
@@ -252,10 +264,24 @@ def run(args):
             print(entry)
 
             val_key = "val_loss" if "val_loss" in eval_metrics else "val_code_lm_loss"
-            if eval_metrics[val_key] < best_val:
+            if eval_metrics[val_key] < best_val - args.min_delta:
                 best_val = eval_metrics[val_key]
                 best_step = step
+                patience_counter = 0
                 torch.save(model.state_dict(), run_dir / "model_best.pt")
+            else:
+                patience_counter += 1
+                # Every extended sweep this session found its real ceiling
+                # by running long past it and reading off the best
+                # checkpoint after the fact -- e.g. code/base/m at step
+                # 1250 needed a 2000-step run to discover. Patience=0
+                # disables this (matches every run so far, all of which
+                # used a fixed --steps budget with no early stop).
+                if args.patience > 0 and patience_counter >= args.patience:
+                    print(f"early stopping at step {step}: no improvement for "
+                          f"{args.patience} checkpoints (best was step {best_step}: {best_val:.4f})")
+                    stopped_early = True
+                    break
 
         if step % args.sample_every == 0 or step == args.steps:
             if is_joint:
@@ -337,6 +363,10 @@ if __name__ == "__main__":
     p.add_argument("--block-size", type=int, default=128)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--steps", type=int, default=300)
+    p.add_argument("--patience", type=int, default=0, help="stop after this many checkpoints with no val "
+                    "improvement (0 = disabled, run the full --steps budget -- matches every run this session "
+                    "so far, all of which used a fixed budget with no early stop)")
+    p.add_argument("--min-delta", type=float, default=0.0, help="minimum val-loss improvement to reset patience")
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--n-future", type=int, default=2, help="mtp arm only")
     p.add_argument("--align-weight", type=float, default=0.5, help="jepa-aux arm only")
@@ -350,6 +380,13 @@ if __name__ == "__main__":
     p.add_argument("--use-bitlinear", action="store_true", help="BitLinear throughout Ducky's own blocks (attention/RWKV + dense MLP)")
     p.add_argument("--embedding-rank", type=int, default=0, help="0 = plain tied embedding; >0 = TensorRankEmbedding at this rank")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--num-threads", type=int, default=8, help="torch.set_num_threads() -- measured optimal on this "
+                    "machine (20 logical cores); the default 10 is close but 8 was faster, and 16-20 was 4-6x slower "
+                    "from thread-sync overhead swamping the benefit on our small tensor ops")
+    p.add_argument("--compile-full-model", action="store_true", help="compile the whole forward pass, not just the "
+                    "WKV scan -- faster steady-state (0.146s/step measured vs 0.217s/step scan-only) but ~480s "
+                    "one-time compile cost vs ~170s; only worth it for long runs (breakeven ~4300 extra steps)")
     args = p.parse_args()
     torch.manual_seed(args.seed)
+    torch.set_num_threads(args.num_threads)
     run(args)

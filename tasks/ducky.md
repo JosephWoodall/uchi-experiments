@@ -96,6 +96,32 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   pure-RWKV BPTT run (no attention escape hatch) or a much larger step
   budget actually induce retention? Ducky's unlimited-context property
   remains real and unused, not real and exploited.
+  **Both candidate explanations now tested and resolved.** (1) Escape
+  hatch: ruled out -- pure RWKV (attention removed entirely) gave the
+  identical null result (KL~0.0000 at every horizon). (2) Insufficient
+  steps: also resolved, in the opposite direction than expected -- 5000
+  steps (7x the original budget) made things *worse*, not better. Best
+  val loss occurred at step 500 (4.382), then exploded to 8.283 by step
+  5000 (worse than random guessing) while train loss collapsed to 0.040 --
+  severe memorization, far past any point where long-range retention
+  could plausibly be rewarded. (Also found: `train_bptt.py` saves the
+  *final* state to a file named `..._best.pt`, not the true best --
+  same misleading-name bug class as before; not worth a rerun to fix
+  given the conclusion below.) **Conclusion: this is the same data-ceiling
+  theme that has dominated the whole session.** The corpus is too small
+  for "use distant context" to ever out-compete "memorize what's already
+  been seen," at any BPTT step count tested. Not an architecture failure
+  -- a fixed, small-corpus ceiling that this specific mechanism can't get
+  past. Would need a genuinely larger corpus, not more steps, to test
+  fairly.
+  **Follow-up done, decisive**: reran BPTT with attention_layers=()
+  (pure RWKV, escape hatch fully removed). KL still ~0.0000 at every
+  horizon (128-640 tokens) — identical to the hybrid result. This rules
+  out the escape-hatch hypothesis directly rather than leaving it
+  unresolved: removing the one plausible confound changed nothing, so the
+  bottleneck is the other hypothesis (700 BPTT steps is too little signal
+  to shift learned decay rates), by elimination, not by assumption. A much
+  larger BPTT step budget is the remaining untested lever.
 - Grounding/abstention validated as a genuine net positive, not just
   mechanically sound: selective-prediction check shows accuracy on
   answered (non-abstained) tokens is meaningfully higher than the
@@ -111,6 +137,12 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   critique/identifier checks) and tested end-to-end — current behavior at
   700 steps is to abstain within 1-4 tokens on most real prompts, which is
   honest calibration for an undertrained toy model, not a defect.
+- BitLinear convergence check done: extended to 3000 steps on the grown
+  code corpus, found its ceiling at step 1875 (val loss 3.8519) — beats
+  dense's ceiling (3.921, step 1250) but doesn't fully close the gap to
+  the unquantized hybrid (3.8267, step 1250), despite needing 50% more
+  steps to get there. Matches expectations: quantization costs some
+  quality, mostly recoverable with more training, not free.
 - Repeat-seed check done (3 seeds, both corpora): **hybrid beats dense
   6/6.** On code, a strong, reliable win (mean margin 0.152 nats, std
   0.035 — small relative to the mean). On rj, the win is real but the
@@ -120,6 +152,46 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   growth (51K->149K tokens) mattered independent of architecture — dense's
   own baseline moved more from that (4.815->~4.06) than the hybrid-vs-dense
   gap did.
+
+**Training efficiency:** the WKV recurrence's Python `for`-loop was the
+concrete, measured bottleneck (hybrid: 0.39-0.58s/step vs dense's 0.15s/step)
+— the same one uchi already solved for their own SSM scan
+(`UCHI_FUSE_SSM_SCAN=1`, README). Applying the identical fix
+(`torch.compile` over the whole scan, not a switch to a parallel scan,
+which uchi tried and reverted for memory-bandwidth reasons) gives a
+measured **2.65x steady-state speedup** (0.5757s/step eager -> 0.2174s/step
+compiled, controlled same-script comparison), at a one-time ~169s
+compilation cost that pays for itself within a single 700-step run.
+Verified numerically identical to the eager version (max diff ~1e-7,
+float32 rounding, not a real discrepancy) — same math, just fused. Env var
+`UCHI_FUSE_SSM_SCAN=0` disables it if `torch.compile` misbehaves in a given
+environment, same escape-hatch name uchi itself uses.
+
+Went further: `--compile-full-model` (`train.py`) compiles the whole
+forward pass, not just the scan. Measured 0.146s/step steady-state —
+actually faster than plain dense's *uncompiled* 0.15s/step, a 3.95x
+speedup over the original eager baseline (beats uchi's own reported 3x).
+Verified numerically correct (diff ~7e-7). Real tradeoff, not free: ~480s
+one-time compile cost vs ~170s for scan-only, breakeven at ~4300 extra
+steps — opt-in for long runs, not the default for quick experiments.
+Also found and fixed a real bug while testing this (an overly broad
+`replace_all` renamed a function parameter but not its body reference —
+caught immediately by a crash, not silently wrong). And a genuine, honest
+limitation surfaced, present in the *default* scan-only compilation too,
+not just full-model: `generate()`'s token-by-token growing context length
+means the compiled scan gets recompiled for each new shape it sees during
+sampling, capped at 8 recompiles before falling back to eager. Bounded,
+doesn't affect correctness or the fixed-length training loop, but a real
+one-time cost during sample generation specifically — not hidden.
+CPU thread count also tuned: 8 threads measured optimal (0.209s/step) vs
+the PyTorch default of 10 (0.252s/step) vs 16-20 (0.91-1.31s/step, 4-6x
+slower from thread-sync overhead) — now the default in `train.py`.
+
+bfloat16 tested and **rejected**, not adopted: only ~13% speedup
+(0.0133s->0.0116s/call) against real, non-trivial precision loss (up to
+8.5% of a standard deviation, worst case) in a recurrence run sequentially
+across 128 timesteps, where per-step error can compound. Risk/reward
+doesn't clear the bar next to `torch.compile`'s exact-correctness win.
 
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by

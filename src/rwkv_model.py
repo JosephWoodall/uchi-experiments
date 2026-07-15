@@ -14,6 +14,7 @@ No positional embedding: the recurrence itself encodes sequence order,
 unlike TinyGPT's learned pos_emb table (which is itself another source of
 TinyGPT's hard length cap).
 """
+import os
 from dataclasses import dataclass
 
 import torch
@@ -26,6 +27,56 @@ class RWKVConfig:
     vocab_size: int
     d_model: int
     n_layer: int
+
+
+def _wkv_scan(k, v, w, u, a, b, p):
+    """Sequential WKV recurrence, numerically stable (running max in
+    log-space). Extracted as a standalone function -- not a method -- so a
+    single compiled version is shared across every TimeMixing layer/
+    instance, rather than each one separately retracing the identical
+    algorithm on identical shapes.
+
+    Matches uchi's own fix for the identical bottleneck (uchi/README.md:
+    `UCHI_FUSE_SSM_SCAN=1` fuses their sequential SSM scan via
+    torch.compile over the whole loop, not per-step -- and explicitly not
+    a switch to a parallel/associative scan, which they tried and reverted
+    for measured memory-bandwidth reasons). Same algorithm as before,
+    same math, just letting the compiler fuse the many small per-step ops
+    into fewer kernel launches instead of paying Python dispatch overhead
+    128 times per forward call.
+    """
+    T = k.shape[1]
+    outputs = []
+    for t in range(T):
+        kt, vt = k[:, t, :], v[:, t, :]
+
+        ww = u + kt
+        q = torch.maximum(p, ww)
+        e1 = torch.exp(p - q)
+        e2 = torch.exp(ww - q)
+        wkv = (e1 * a + e2 * vt) / (e1 * b + e2 + 1e-8)
+        outputs.append(wkv)
+
+        ww2 = p + w
+        q2 = torch.maximum(ww2, kt)
+        e1b = torch.exp(ww2 - q2)
+        e2b = torch.exp(kt - q2)
+        a = e1b * a + e2b * vt
+        b = e1b * b + e2b
+        p = q2
+
+    return torch.stack(outputs, dim=1), a, b, p
+
+
+# Compiled once at import time and shared across every TimeMixing instance.
+# UCHI_FUSE_SSM_SCAN=0 disables it (falls back to the eager loop) in case
+# torch.compile isn't happy in a given environment -- same escape hatch
+# name uchi itself uses for the identical decision.
+_USE_COMPILED_SCAN = os.environ.get("UCHI_FUSE_SSM_SCAN", "1") != "0"
+try:
+    _scan = torch.compile(_wkv_scan) if _USE_COMPILED_SCAN else _wkv_scan
+except Exception:
+    _scan = _wkv_scan
 
 
 class TimeMixing(nn.Module):
@@ -71,26 +122,7 @@ class TimeMixing(nn.Module):
         else:
             a, b, p = state
 
-        outputs = []
-        for t in range(T):
-            kt, vt = k[:, t, :], v[:, t, :]
-
-            ww = u + kt
-            q = torch.maximum(p, ww)
-            e1 = torch.exp(p - q)
-            e2 = torch.exp(ww - q)
-            wkv = (e1 * a + e2 * vt) / (e1 * b + e2 + 1e-8)
-            outputs.append(wkv)
-
-            ww2 = p + w
-            q2 = torch.maximum(ww2, kt)
-            e1b = torch.exp(ww2 - q2)
-            e2b = torch.exp(kt - q2)
-            a = e1b * a + e2b * vt
-            b = e1b * b + e2b
-            p = q2
-
-        wkv_out = torch.stack(outputs, dim=1)
+        wkv_out, a, b, p = _scan(k, v, w, u, a, b, p)
         return self.output(r * wkv_out), (a, b, p)
 
 
