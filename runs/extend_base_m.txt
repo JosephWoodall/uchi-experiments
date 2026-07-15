@@ -1,0 +1,22 @@
+[rj/base/m] 940,800 params, block_size=128
+{'step': 300, 'wall_s': 46.28, 'loss': 4.236789703369141, 'val_loss': 4.618100357055664}
+  sample @ 300: 'ROMEO: my jed ‘ark the mad_one, good That sir,— Wuliet have as is ser fell, Which’s fids not highsself! Thou’den so’s daughter’d and fearn’s do. Some'
+{'step': 600, 'wall_s': 93.41, 'loss': 3.7371749877929688, 'val_loss': 4.336459445953369}
+  sample @ 600: 'ROMEO: hoain love, but, one didgile kuntself that, and run day, I stay her modvlely me, Fearariance widthdden, No tears, on the o’ll pay thre my wilt doth man. ROMEO.'
+{'step': 900, 'wall_s': 141.23, 'loss': 3.3669469356536865, 'val_loss': 4.404898834228516}
+  sample @ 900: 'ROMEO: O, bid him hurtmenermine? How now? O, thou hast then, and then, Romeo be that house, Gurday, Noroons’d. [_Tison._] MONTAGUE. Friar, A'
+{'step': 1200, 'wall_s': 192.07, 'loss': 2.845346689224243, 'val_loss': 4.545234298706054}
+  sample @ 1200: 'ROMEO: and I long in bl Which so frown’d inragants’d, and I know the unmbrave as hapes of goldeny Ay, In high formok of the lety. [_Exit._] BENVOLIO. Affe'
+{'step': 1500, 'wall_s': 241.56, 'loss': 2.2526419162750244, 'val_loss': 4.773656368255615}
+  sample @ 1500: 'ROMEO: here comes the sit, Being hoar a wrant-den waying peace, And peace all my good bed.—mend for a leave, wed to bring is not toward he art. L, you to'
+{'step': 1800, 'wall_s': 290.91, 'loss': 1.6041045188903809, 'val_loss': 5.170972728729248}
+  sample @ 1800: 'ROMEO: Ever blood,’d huffing our fusw tsumeYic with thy leave with thy chees, Den feast by thy serp’d, With tears but unbes on the streas sir, As v'
+{'step': 2100, 'wall_s': 342.72, 'loss': 1.2326879501342773, 'val_loss': 5.43123836517334}
+  sample @ 2100: 'ROMEO: This is well-se? Come, and Romeo, holy word As that compancause. B LAWRENCE. God shall that happy; formask; that vow. [_Deness that vow. Fround up and._] MOND S'
+{'step': 2400, 'wall_s': 392.69, 'loss': 0.832491934299469, 'val_loss': 5.708304309844971}
+  sample @ 2400: 'ROMEO: I dost notep for such, I Mercutio’s lawrence. Come, thou humourd with, thou with, Lady! Hence so highmold with cell. They will,not be spus! Well,'
+{'step': 2700, 'wall_s': 440.38, 'loss': 0.6014588475227356, 'val_loss': 5.94732666015625}
+  sample @ 2700: 'ROMEO: Ead youthing of every night for lovery uns would pile wide bank and towencing meound, Hence bu torment to his body, The fartheer’d with over life out Calling out mo'
+{'step': 3000, 'wall_s': 490.16, 'loss': 0.4592708647251129, 'val_loss': 6.260987281799316}
+  sample @ 3000: 'ROMEO: I house as do banish on his man, Shall I have a world a why you with peace.’d such thee fearful hold. A banision, he’s a mind, a miseddy, a sweet'
+done in 490.6s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m
