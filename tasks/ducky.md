@@ -82,12 +82,20 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   against a real symbol table instead of token boundaries.
 - The unlimited-context mechanism is structurally proven (constant
   memory, linear time, verified directly on the Ducky checkpoint, not
-  just standalone RWKV) but this checkpoint doesn't yet *use* it for
-  long-range recall — trained exclusively on 128-token crops, so nothing
-  ever rewarded retaining information past that horizon. Cross-chunk BPTT
-  training (`train_bptt.py`, K=4 chunks, state not detached across them)
-  is the direct fix, run and re-checked against the recall test — see
-  `tasks/todo.md` Phase H for the result.
+  just standalone RWKV) but this checkpoint still doesn't *use* it for
+  long-range recall. Cross-chunk BPTT training (`train_bptt.py`, K=4
+  chunks, state not detached across them) was built and run specifically
+  to fix this — result: **negative, and decisively so**. KL divergence
+  between carried-state and fresh-state predictions is 0.0000 at every
+  horizon checked (128 through 640 tokens), including 512 tokens, exactly
+  the span BPTT training was designed to cover. Diagnosed cause, not a
+  mystery: 700 steps is a small budget to shift learned decay rates, and
+  the hybrid's attention layer gives the model an escape hatch — it can
+  hit low loss per chunk via local attention alone, with no pressure to
+  ever rely on the carried RWKV state. Open, untested question: would a
+  pure-RWKV BPTT run (no attention escape hatch) or a much larger step
+  budget actually induce retention? Ducky's unlimited-context property
+  remains real and unused, not real and exploited.
 - Grounding/abstention validated as a genuine net positive, not just
   mechanically sound: selective-prediction check shows accuracy on
   answered (non-abstained) tokens is meaningfully higher than the

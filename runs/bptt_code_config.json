@@ -1,0 +1,1 @@
+{"dataset": "code", "size": "m", "k_chunks": 4, "block_size": 128, "attention_layers": [2], "rwkv_hybrid": true, "best_val": 3.866982936859131}

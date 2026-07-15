@@ -369,9 +369,30 @@ their own merits, not bundled with the failed swarm mechanism.
       step 600 (val_code_lm_loss 4.155), train/val gap real but no longer
       catastrophic. Still doesn't beat plain base on code_lm_loss alone
       (3.921) -- not a win yet, but no longer a diagnosed failure either.
-- [ ] In progress: hybrid and hybrid+BitLinear extended-step results on the
-      grown corpus, and the BPTT long-range recall re-test (task #39) --
-      reporting once the background sweep finishes.
+- [x] Extended sweep complete. **Both dense and hybrid bottom out at the
+      exact same step (1250)** on the grown code corpus -- strong evidence
+      the ceiling is set by the data, not the architecture. Dense: 3.921.
+      Hybrid: 3.826 (still winning, margin 0.094). Hybrid+BitLinear: still
+      improving at step 2000 (3.931), hadn't found its ceiling within the
+      tested budget -- quantization needs more steps to recover, as
+      expected from the MoE+BitLinear finding earlier in the session; not
+      yet comparable to the other two until it actually converges.
+- [x] BPTT long-range recall re-test: **negative, and more decisive than
+      "not yet tested."** KL divergence is 0.0000 at every horizon checked
+      (128 through 640 tokens) -- including 512 tokens, exactly the span
+      BPTT training (K=4 chunks) was designed to cover. Carrying state
+      forward measurably changes nothing, even within the mechanism's own
+      training horizon. Diagnosed, not just observed: (1) 700 BPTT steps
+      is a small budget to shift learned per-channel decay rates away from
+      their aggressive default, and the cross-chunk gradient signal is
+      real but likely weak relative to the dominant within-chunk
+      prediction signal; (2) more structurally, the hybrid's attention
+      layer gives the model an escape hatch -- it can hit low loss on each
+      chunk via full local attention alone, with no pressure to ever rely
+      on the RWKV layers' carried state. Nothing forces the mechanism to
+      be used just because it's available. Open question for a future
+      pass: would a pure-RWKV (no attention escape hatch) BPTT run, or a
+      much larger BPTT step budget, actually induce retention? Not tested.
 - [x] Grounding/abstention net-positive check (`eval_grounding.py`) --
       selective-prediction evaluation: is accuracy on answered
       (non-abstained) tokens actually higher than the pure-neural
