@@ -4,13 +4,16 @@
   "size": "xs",
   "block_size": 128,
   "batch_size": 32,
-  "steps": 300,
+  "steps": 100,
   "lr": 0.0003,
   "n_future": 2,
   "align_weight": 0.5,
   "log_every": 100,
-  "sample_every": 300,
+  "sample_every": 100,
+  "moe_experts": 0,
+  "moe_top_k": 1,
+  "bitlinear_experts": false,
   "n_params": 62336,
-  "best_step": 300,
-  "best_val": 5.7303893089294435
+  "best_step": 100,
+  "best_val": 6.223229503631591
 }

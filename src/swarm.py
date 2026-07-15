@@ -65,7 +65,7 @@ def generate(model, graph, prompt_ids, max_new_tokens, use_graph, use_swarm,
     ids = prompt_ids.clone()
     for _ in range(max_new_tokens):
         idx_cond = ids[:, -model.cfg.block_size:]
-        logits, _, _ = model(idx_cond)
+        logits, _, _, _ = model(idx_cond)
         neural_logits = logits[:, -1, :]
         last_token = ids[0, -1].item()
 

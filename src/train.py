@@ -63,7 +63,7 @@ MOE_AUX_WEIGHT = 0.01  # standard small weight for load-balancing losses
 
 def compute_lm_loss(model, x, targets, pad_id):
     """targets: (B, T, n_future); k=0 is the standard next-token target."""
-    logits, extra_logits, aux_loss = model(x)
+    logits, extra_logits, aux_loss, _ = model(x)
     all_logits = [logits] + (extra_logits or [])
     total, count = 0.0, 0
     for k, lg in enumerate(all_logits):
@@ -111,6 +111,8 @@ def run(args):
         moe_experts=args.moe_experts,
         moe_top_k=args.moe_top_k,
         use_bitlinear_experts=args.bitlinear_experts,
+        use_rwkv_hybrid=args.rwkv_hybrid,
+        attention_layers=tuple(args.attention_layers) if args.attention_layers else (),
         **size_cfg,
     )
     model = TinyGPT(cfg)
@@ -121,6 +123,7 @@ def run(args):
 
     moe_suffix = f"_moe{args.moe_experts}" if args.moe_experts > 0 else ""
     moe_suffix += "bl" if args.bitlinear_experts else ""
+    moe_suffix += "_rwkv" if args.rwkv_hybrid else ""
     run_name = f"{args.dataset}_{args.arm}_{args.size}{moe_suffix}"
     run_dir = RUNS_DIR / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -337,6 +340,8 @@ if __name__ == "__main__":
     p.add_argument("--moe-experts", type=int, default=0, help="0 = dense MLP; >0 = MoE FFN with this many routed experts")
     p.add_argument("--moe-top-k", type=int, default=1)
     p.add_argument("--bitlinear-experts", action="store_true", help="quantize MoE experts (ported from uchi's BitLinear)")
+    p.add_argument("--rwkv-hybrid", action="store_true", help="RWKV time-mixing blocks + periodic attention, instead of pure attention")
+    p.add_argument("--attention-layers", type=int, nargs="*", default=[], help="0-indexed layers using attention when --rwkv-hybrid; rest use RWKV")
     args = p.parse_args()
     torch.manual_seed(0)
     run(args)

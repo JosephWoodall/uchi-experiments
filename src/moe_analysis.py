@@ -43,7 +43,7 @@ def main():
         model.train()
         opt.zero_grad()
         x, targets = get_joint_batch(train_dict, weights, BATCH_SIZE, BLOCK_SIZE)
-        logits, _, aux_loss = model(x)
+        logits, _, aux_loss, _ = model(x)
         loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets[:, :, 0].reshape(-1)) + 0.01 * aux_loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

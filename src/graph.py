@@ -127,6 +127,65 @@ def build_cooccurrence_edges(ids: list, min_freq: int = 3, max_freq: int = 80) -
     return edges
 
 
+def add_model_prediction_edges(graph: TokenGraph, model, ids, confidence_threshold: float = 0.95,
+                                n_samples: int = 500, block_size: int = 128) -> int:
+    """Third knowledge source: the model's own high-confidence predictions,
+    added back as graph edges (swarm.md's mechanism, minus the "expert
+    agreement" part -- no swarm, so the gate is just this single model's
+    own softmax confidence). Only genuinely novel edges are added -- if the
+    model is highly confident about something the graph already has an
+    edge for, that's confirmation, not new knowledge, so it's skipped.
+    Confidence-gated at a high bar (0.95, matching swarm.md) specifically
+    because this is the riskiest of the three sources: a confidently wrong
+    model prediction, added uncritically, becomes a self-reinforcing error
+    the next time the graph is queried (the echo-chamber risk flagged in
+    the conversation record's weaknesses list). Nothing here cross-checks
+    against semantic facts before adding -- that override still only
+    happens at query/add_edge time via confidence comparison.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    model.eval()
+    added = 0
+    ids_t = ids if torch.is_tensor(ids) else torch.tensor(ids)
+    with torch.no_grad():
+        for _ in range(n_samples):
+            start = torch.randint(0, len(ids_t) - block_size - 1, (1,)).item()
+            chunk = ids_t[start : start + block_size].unsqueeze(0)
+            logits, _, _, _ = model(chunk)
+            probs = F.softmax(logits[0, -1], dim=-1)
+            conf, pred = probs.max(dim=-1)
+            src = ids_t[start + block_size - 1].item()
+            tgt = pred.item()
+            if conf.item() < confidence_threshold:
+                continue
+            if tgt in graph.successors(src):
+                continue  # already known -- confirmation, not new knowledge
+            graph.add_edge(src, tgt, relation_type="model_prediction", weight=conf.item(),
+                            confidence=conf.item(), provenance="model_inference")
+            added += 1
+    return added
+
+
+def add_user_correction(graph: TokenGraph, context_last_token: int, correct_token: int,
+                         incorrect_token: int = None) -> None:
+    """Post-hoc fix, no retraining: if the graph (or by extension the model)
+    was about to suggest something wrong, this corrects it immediately --
+    the next query sees the fix. Highest-confidence provenance, so it wins
+    over any existing edge for this (src, correct_token) pair, and if an
+    incorrect edge is named, it's downweighted (not deleted -- keeps the
+    record that it was once believed, at lower confidence) rather than
+    silently erased.
+    """
+    if incorrect_token is not None and incorrect_token in graph.successors(context_last_token):
+        edge = graph.edges[context_last_token][incorrect_token]
+        edge["weight"] *= 0.5
+        edge["confidence"] *= 0.5
+    graph.add_edge(context_last_token, correct_token, relation_type="semantic_fact", weight=1.0,
+                    confidence=1.0, provenance="user_correction")
+
+
 def build_graph(tok, code_source: str, rj_ids, code_ids) -> TokenGraph:
     graph = TokenGraph()
     for src, tgt, meta in build_ast_fact_edges(tok, code_source):

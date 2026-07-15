@@ -13,7 +13,11 @@
   "moe_experts": 0,
   "moe_top_k": 1,
   "bitlinear_experts": false,
-  "n_params": 940800,
+  "rwkv_hybrid": true,
+  "attention_layers": [
+    2
+  ],
+  "n_params": 941184,
   "best_step": 700,
-  "best_val": 4.361394214630127
+  "best_val": 4.3512273788452145
 }

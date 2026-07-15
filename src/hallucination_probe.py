@@ -59,6 +59,8 @@ def load_model(run_dir: Path, tok: Tokenizer, checkpoint: str = "model_best.pt")
         moe_experts=cfg_dict.get("moe_experts", 0),
         moe_top_k=cfg_dict.get("moe_top_k", 1),
         use_bitlinear_experts=cfg_dict.get("bitlinear_experts", False),
+        use_rwkv_hybrid=cfg_dict.get("rwkv_hybrid", False),
+        attention_layers=tuple(cfg_dict.get("attention_layers", [])),
         **size_cfg,
     )
     model = TinyGPT(cfg)
@@ -74,7 +76,7 @@ def avg_confidence(model: TinyGPT, tok: Tokenizer, prompt: str, max_new_tokens: 
     confidences = []
     for _ in range(max_new_tokens):
         idx_cond = ids[:, -model.cfg.block_size :]
-        logits, _, _ = model(idx_cond)
+        logits, _, _, _ = model(idx_cond)
         probs = F.softmax(logits[:, -1, :], dim=-1)
         conf, next_id = probs.max(dim=-1)
         confidences.append(conf.item())

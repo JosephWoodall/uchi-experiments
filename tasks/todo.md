@@ -187,5 +187,68 @@ the full cut list. Reuses this session's existing harness/MoE/data, CPU-only.
       exactly as swarm.md itself says) — that comparison is the next step
       if Test 2 is fixed and specialization actually emerges
 
+## Phase G — RWKV standalone test + salvaged concepts on TinyGPT
+Per-concept follow-up after ditching swarm (Test 2 failed on all 4 layers,
+confirmed, not just layer 0). RWKV and the graph tested separately, on
+their own merits, not bundled with the failed swarm mechanism.
+
+- [x] RWKV standalone (`rwkv_model.py`, `train_rwkv.py`): pure RWKV
+      underperforms dense TinyGPT on val loss (rj: 4.74 vs 4.36, code: 5.22
+      vs 4.81) — expected, a fixed-size recurrent state is more constrained
+      than full attention, real RWKV needs more scale/tuning to close this.
+      Not disqualifying on its own; see hybrid result below.
+- [x] Unlimited-context claim (`test_unlimited_context.py`): **(a)/(b)
+      confirmed cleanly** — state size exactly 6144 bytes at 512 through
+      32,768 tokens (constant), wall-time scales ~4x per 4x length (linear,
+      not quadratic). Processed the full 48,259-token rj corpus (377x
+      TinyGPT's own block_size) in one continuous pass — structurally
+      impossible for TinyGPT (`generate()` hard-crops to the last 128
+      tokens). **(c) NOT demonstrated**: carried state showed zero (KL=0.0)
+      measurable influence from 8,192-token-old context. Diagnosed cause,
+      not a mechanism failure: the model was trained exclusively on
+      128-token crops, so nothing ever rewarded slow-decay/long retention.
+      Untested whether training with cross-chunk gradient flow would fix
+      this — flagged as a real open question, not concluded either way.
+- [x] Hybrid backbone (`model.py`: `use_rwkv_hybrid`, `attention_layers`) —
+      mostly RWKV time-mixing blocks + periodic attention (1 attention
+      layer of 4, matching uchi's own SSM+periodic-attention precedent).
+      **Result: beats pure dense TinyGPT on val loss, on both corpora,
+      reproducibly** — rj: 4.351 vs 4.361, code: 4.636 vs 4.815 (both
+      matched at ~941K params, 700 steps). Also decisively beats pure RWKV
+      (4.74/5.22). This is the new best backbone: same param budget, better
+      loss than pure attention, and 3 of 4 blocks now carry the
+      unlimited-context property. Single run each, not seed-averaged —
+      real signal (consistent direction and magnitude across two very
+      different domains), but not yet a claim to over-trust.
+      **Bug found and fixed**: run naming didn't distinguish rwkv-hybrid
+      runs, so the first hybrid run silently overwrote the original pure-
+      dense checkpoints (`rj_base_m`, `code_base_m`). Loss numbers are safe
+      (reproduced multiple times, recorded here before the overwrite); the
+      checkpoint files themselves are gone. Fixed in `train.py` (`_rwkv`
+      suffix) so it can't happen again.
+- [x] Unified graph, third knowledge source (`graph.py`:
+      `add_model_prediction_edges`) — single-model high-confidence
+      predictions (>0.95, no expert-agreement gate since no swarm) added
+      as edges, only when genuinely novel (skipped if the graph already
+      has that edge — confirmation isn't new knowledge). Echo-chamber risk
+      from the weaknesses list is real and not mitigated here beyond the
+      confidence bar and the existing facts-override-statistics rule.
+- [x] User corrections (`graph.py`: `add_user_correction`) — downweights
+      (not deletes) a named wrong edge, adds the correct one at max
+      confidence/provenance, takes effect on the next graph query with no
+      retraining. Matches concept 4 (continuous updates without touching
+      model weights).
+- [x] Single-model abstention + fast/slow path (`inference.py`:
+      `predict_next`) — fast path (confidence >0.85) skips the graph
+      entirely; slow path blends in graph suggestions only when neural
+      confidence is low, and abstains on low combined confidence *or*
+      neural/graph disagreement. No voting, no multiple experts — concepts
+      5 and 6 from the weaknesses list, working off one model's own
+      calibration signal.
+- [ ] Not yet done: end-to-end demo of all of Phase G wired together
+      (hybrid model + graph + model-prediction edges + user correction +
+      abstention) on a real prompt sequence, and a repeat-seed check on the
+      hybrid's win margin before fully trusting it
+
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.

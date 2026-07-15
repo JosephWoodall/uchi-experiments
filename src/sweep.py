@@ -20,7 +20,8 @@ MATRIX = {
 }
 
 
-def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinear_experts=False):
+def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinear_experts=False,
+                  rwkv_hybrid=False, attention_layers=None):
     checkpoint_every = max(steps // 5, 1)
     return argparse.Namespace(
         dataset=dataset,
@@ -37,6 +38,8 @@ def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinea
         moe_experts=moe_experts,
         moe_top_k=moe_top_k,
         bitlinear_experts=bitlinear_experts,
+        rwkv_hybrid=rwkv_hybrid,
+        attention_layers=attention_layers or [],
     )
 
 
