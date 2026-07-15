@@ -4,11 +4,13 @@
   "size": "m",
   "block_size": 128,
   "batch_size": 32,
-  "steps": 3000,
+  "steps": 700,
   "lr": 0.0003,
   "n_future": 2,
   "align_weight": 0.5,
-  "log_every": 300,
-  "sample_every": 300,
-  "n_params": 940800
+  "log_every": 100,
+  "sample_every": 700,
+  "n_params": 940800,
+  "best_step": 600,
+  "best_val": 4.80620641708374
 }
