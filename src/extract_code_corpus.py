@@ -1,6 +1,17 @@
 """Build the code corpus from a deliberate, fixed set of CPython stdlib
-modules: chosen for size (~150KB total, matching romeo_and_juliet.txt) and
-for being pure-Python, idiomatic, and well-docstringed (PSF license).
+modules: chosen for being pure-Python, idiomatic, and well-docstringed
+(PSF license) -- not a scrape, a hand-picked list, same as the original 5.
+
+Grown from 5 to 10 modules (~150KB -> ~425KB) to reduce signal-starvation
+in a few diagnosed places (AST-fact fragmentation, sparse model-prediction
+edges, thin confidence distributions) -- deliberately still small and
+hand-picked, not a switch to broad/scraped data.
+
+The existing tokenizer/vocab is NOT retrained here -- growing the corpus
+this way keeps every checkpoint trained so far loadable and comparable
+(same vocab_size, same token-id meanings). Only the `code` token cache
+(data/cache/code.pt) needs regenerating, and only for future runs that
+load it fresh.
 
 Produces:
   data/code/corpus.txt   - concatenated raw source, for `base`/`mtp` arms
@@ -11,7 +22,10 @@ import json
 import sysconfig
 from pathlib import Path
 
-MODULES = ["statistics.py", "textwrap.py", "heapq.py", "bisect.py", "fractions.py"]
+MODULES = [
+    "statistics.py", "textwrap.py", "heapq.py", "bisect.py", "fractions.py",
+    "enum.py", "dataclasses.py", "contextlib.py", "functools.py", "pathlib/__init__.py",
+]
 MIN_DOC_CHARS = 20
 
 stdlib = Path(sysconfig.get_path("stdlib"))

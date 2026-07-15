@@ -49,25 +49,74 @@ def measure_confidence_distribution(model, val_ids, block_size: int, n_samples: 
     return torch.tensor(confidences)
 
 
-def calibrate_thresholds(model, val_ids, block_size: int, fast_percentile: float = 85,
-                          abstain_percentile: float = 15, n_samples: int = 500):
+@torch.no_grad()
+def _measure_combined_confidence_distribution(model, graph, val_ids, block_size: int,
+                                                fast_threshold: float, alpha: float, beta: float,
+                                                n_samples: int = 500):
+    """Combined (neural+graph-blended) confidence, conditioned on actually
+    reaching the slow path (raw neural confidence below fast_threshold) and
+    having graph coverage -- the two conditions under which this
+    distribution is actually used. Calibrating against the *unconditional*
+    combined distribution (or reusing the raw-neural one, the first-pass
+    bug) mismatches the scale predict_next actually sees at decision time.
+    """
+    model.eval()
+    ids_t = val_ids if torch.is_tensor(val_ids) else torch.tensor(val_ids)
+    confidences = []
+    attempts = 0
+    while len(confidences) < n_samples and attempts < n_samples * 20:
+        attempts += 1
+        start = torch.randint(0, len(ids_t) - block_size - 1, (1,)).item()
+        chunk = ids_t[start : start + block_size].unsqueeze(0)
+        logits, _, _, _ = model(chunk)
+        neural_logits = logits[0, -1, :]
+        neural_conf = F.softmax(neural_logits, dim=-1).max().item()
+        if neural_conf >= fast_threshold:
+            continue  # would take the fast path, this threshold never applies
+        last_token = ids_t[start + block_size - 1].item()
+        graph_edges = graph.successors(last_token)
+        if not graph_edges:
+            continue  # different branch (no-graph-coverage), different threshold
+        graph_scores = torch.zeros_like(neural_logits)
+        for tgt, meta in graph_edges.items():
+            graph_scores[tgt] = meta["weight"] * meta["confidence"]
+        combined_logits = alpha * neural_logits + beta * graph_scores
+        confidences.append(F.softmax(combined_logits, dim=-1).max().item())
+    return torch.tensor(confidences) if confidences else torch.tensor([0.0])
+
+
+def calibrate_thresholds(model, graph, val_ids, block_size: int, fast_percentile: float = 85,
+                          abstain_percentile: float = 15, slow_abstain_percentile: float = 15,
+                          alpha: float = 0.6, beta: float = 0.4, n_samples: int = 500):
     """Percentile-based thresholds from this checkpoint's own confidence
-    distribution: fast path = "more confident than most of what this model
-    ever produces," abstain = "less confident than nearly everything this
-    model produces." Returns (fast_threshold, abstain_threshold).
+    distributions -- two distributions, not one, because the slow path's
+    decision is made on a differently-scaled (graph-blended) confidence
+    than the fast/slow split itself. Returns (fast_threshold,
+    abstain_threshold, slow_abstain_threshold).
     """
     dist = measure_confidence_distribution(model, val_ids, block_size, n_samples)
     fast_t = torch.quantile(dist, fast_percentile / 100).item()
     abstain_t = torch.quantile(dist, abstain_percentile / 100).item()
-    return fast_t, abstain_t
+
+    combined_dist = _measure_combined_confidence_distribution(
+        model, graph, val_ids, block_size, fast_t, alpha, beta, n_samples
+    )
+    slow_abstain_t = torch.quantile(combined_dist, slow_abstain_percentile / 100).item()
+    return fast_t, abstain_t, slow_abstain_t
 
 
 def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAULT_FAST_THRESHOLD,
-                  abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD, alpha: float = 0.6, beta: float = 0.4):
+                  abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD,
+                  slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4):
     """Returns (token_id or ABSTAIN, info_dict) for the next token after idx.
-    fast_threshold/abstain_threshold should come from calibrate_thresholds()
-    for this specific model, not the module defaults.
+    All three thresholds should come from calibrate_thresholds() for this
+    specific (model, graph) pair, not the module defaults. slow_abstain_threshold
+    defaults to abstain_threshold if not given (the original, now-fixed bug's
+    behavior), but calibrate_thresholds always provides its own value.
     """
+    if slow_abstain_threshold is None:
+        slow_abstain_threshold = abstain_threshold
+
     with torch.no_grad():
         logits, _, _, _ = model(idx[:, -model.cfg.block_size :])
         neural_logits = logits[0, -1, :]
@@ -98,7 +147,7 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     graph_top = max(graph_edges, key=lambda t: graph_edges[t]["weight"] * graph_edges[t]["confidence"])
     consistent = (graph_top == neural_pred) or (neural_pred in graph_edges)
 
-    if combined_conf < abstain_threshold or not consistent:
+    if combined_conf < slow_abstain_threshold or not consistent:
         return ABSTAIN, {"path": "slow", "reason": "low confidence or graph/neural disagreement",
                           "neural_pred": neural_pred, "graph_top": graph_top,
                           "confidence": round(combined_conf, 4), "consistent": consistent}

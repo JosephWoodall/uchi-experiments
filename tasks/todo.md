@@ -268,10 +268,53 @@ their own merits, not bundled with the failed swarm mechanism.
       exactly 4608 bytes (3 RWKV blocks' worth; the attention block
       correctly contributes none) from 512 through 32,768 tokens, time
       scaling ~4x per 4x length (linear). Closes the gap flagged earlier.
-- [ ] Not yet done: separately calibrate the slow-path (graph-blended)
-      threshold; repeat-seed check on Ducky's win margin over pure dense
-      before fully trusting it; see `tasks/ducky.md` for the architecture
-      write-up
+- [x] Slow-path threshold fix: calibrate_thresholds now measures the
+      combined (neural+graph-blended) confidence distribution separately
+      and conditionally (only over cases that actually reach the slow path
+      with graph coverage), instead of reusing the raw-neural threshold on
+      a differently-scaled distribution. Verified on 30 real training
+      contexts: slow-answered went from 0/30 to 17/30, abstain from 23/30
+      to 6/30 -- the mechanism now mostly answers and abstains only when
+      it should, not by default.
+- [x] Toward uchi's actual mission (verify against something real, abstain
+      otherwise) while keeping next-token prediction as Ducky's core
+      objective, not replacing it (`grounding.py`):
+      - `verify_code_syntax` — ast.parse validity as a genuine grounding
+        check, scoped down from uchi's full REPL/execute-and-check since
+        generated snippets aren't runnable programs on their own.
+      - `self_critique_score` — teacher-forced re-scoring of the model's
+        own generated tokens; single-model analog of Devil's Advocate, no
+        second expert needed.
+      - `build_symbol_table` / `identifier_grounded` — checks *decoded*
+        identifier strings against real function/attribute/import names
+        from the corpus, sidestepping the BPE-fragment precision problem
+        in graph.py's AST facts entirely rather than chasing better token
+        alignment.
+      - `build_ngram_index` / `ngram_grounded` — verbatim n-gram lookup
+        against real source token sequences, a cheap stand-in for
+        brain.uchi's retrieval index (no embeddings/vector DB).
+      All four validated directly: syntax check correctly flags the
+      model's still-garbled toy-scale output as invalid; self-critique
+      score ~0.08 (consistent with the low confidence distribution already
+      measured); identifier check correctly distinguishes a real vs.
+      made-up symbol; n-gram check correctly distinguishes a real corpus
+      slice from an arbitrary one.
+- [x] Grew the code corpus 5 -> 10 stdlib modules (~150KB -> 425KB, 51K ->
+      149K tokens; pairs.jsonl 106 -> 287), still hand-picked pure-Python
+      modules, not a switch to scraped data. rj left untouched — a second
+      book would violate the original single-input design from the start
+      of the session. Deliberately did NOT retrain the tokenizer to avoid
+      invalidating every checkpoint trained this session (same vocab_size,
+      same token-id meanings) — only the `code` token cache needed
+      regenerating. Code corpus is now ~2.8x bigger than rj; noted as an
+      asymmetry for future joint-training runs, not fixed here.
+- [ ] Not yet done: repeat-seed check on Ducky's win margin over pure
+      dense before fully trusting it; wire grounding.py's four signals
+      into inference.py's predict_next as additional inputs (currently
+      standalone, validated individually but not yet integrated into the
+      abstention decision); retrain Ducky fresh on the grown code corpus
+      for an updated comparison. See `tasks/ducky.md` for the architecture
+      write-up.
 
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.

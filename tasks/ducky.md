@@ -1,0 +1,105 @@
+# Ducky: This Architecture's North Star
+
+**Core idea:** A next-token predictor whose backbone is mostly linear-recurrent
+(unlimited context, O(1) memory) with periodic attention for in-window
+quality, backed by a single updatable knowledge graph and a single model's
+own calibrated confidence — not a swarm of experts. Ducky's mission is to
+**predict tokens well**; grounding and abstention are robustness layers on
+top of that mission, not a replacement of it.
+
+**Why this configuration, not the obvious ones:**
+
+Dense attention-only Transformers (this repo's original baseline) cost
+grows with context and hard-caps at `block_size`. Pure RWKV (linear
+recurrence throughout) removes that cap but underperformed the dense
+baseline on held-out loss at toy scale (rj: 4.74 vs 4.36; code: 5.22 vs
+4.81) — a fixed-size recurrent state is a more constrained mechanism than
+full attention over the window, and real RWKV models need more scale/
+tuning to close that gap. The hybrid (3 RWKV blocks + 1 attention block,
+matching uchi's own SSM-plus-periodic-attention precedent) beat *both*:
+rj 4.351, code 4.636, reproducible on both corpora at matched (~941K)
+params. Same budget, better loss than pure attention, unlimited context on
+3 of 4 blocks. This is not a hedge between two options — it's evidence the
+combination is better than either extreme.
+
+**State-of-the-art grounding:**
+- RWKV: Peng et al. 2023 (arXiv:2305.13048) — linear-time, O(1)-memory
+  recurrence as an attention replacement.
+- BitNet 1.58-bit quantization: Ma et al. 2024 (arXiv:2402.17764) — ported
+  from uchi (`uchi/uchi/flux/bitnet.py`), currently wired only into the
+  (abandoned) MoE experts, not yet into Ducky's own blocks.
+- MoE foundations: Shazeer et al. 2017 (arXiv:1701.06538); DeepSeekMoE
+  2024 (arXiv:2401.06066) — tested and **rejected** for this project (see
+  Alternatives Rejected).
+- Hallucination is not solvable to zero: Kalai & Vempala 2024
+  (arXiv:2311.14648) — abstention is measured as verified-accuracy +
+  abstention-rate, never "hallucination-free."
+- uchi's own precedent (`uchi/README.md`): 17 SSM layers + 3 attention
+  layers at positions 5/11/17 ("SSM handles everything else, attention
+  gives long-range recall checkpoints") — the design pattern Ducky's
+  hybrid directly mirrors, at a much smaller scale.
+
+**Alternatives rejected, with evidence, not assumption:**
+1. **Swarm of specialized experts querying a graph differently**
+   (`tasks/swarm.md`'s original proposal). Rejected after direct testing:
+   routing specialization JS-divergence was 0.0000-0.0002 at *every*
+   layer (0 through 3, checked exhaustively, not just layer 0) on the two
+   most different domains available (Shakespeare dialogue vs. Python
+   stdlib). Without specialization, "swarm" is N redundant experts voting
+   on near-identical outputs — cost without benefit.
+2. **MoE (learned routing, no swarm)** — tested independently of the
+   swarm mechanism. Still lost to dense on held-out loss at every matched
+   param count, on both corpora, and cost 30-60% more wall-clock despite
+   matched active FLOPs (naive per-expert masking loop, not a batched
+   kernel). Rejected at this scale; not proven impossible at larger scale.
+3. **Full JEPA-as-primary-objective** (no token decoder) — solves a
+   different problem than "predicts the next token"; the auxiliary-loss
+   version (`jepa-aux`) is still an open, under-tested arm (86 training
+   pairs was too few, since expanded to ~258 with the corpus growth —
+   worth revisiting, not rejected outright).
+4. **Multi-token prediction (mtp)** — consistently worse than base at
+   every matched param count on both corpora; more steps (150->500) did
+   not close the gap. Needs the training-scale regime the original paper
+   used, not proven dead at toy scale.
+
+**The graph — three knowledge types, one structure, confidence-gated:**
+`graph.py`'s `TokenGraph` unifies AST-grounded facts (code only — text
+dialogue isn't factual prose, so IE-style extraction was skipped entirely,
+not attempted and failed), co-occurrence statistics (domain-agnostic), and
+the model's own high-confidence discoveries (`add_model_prediction_edges`,
+>0.95 confidence, novelty-gated so confirmation isn't mistaken for new
+knowledge). Facts always win over statistics on a conflicting edge
+(confidence-based override, not a special case). `add_user_correction`
+takes effect on the next query with zero retraining — a different, more
+practical notion of hallucination-resistance than "the model never
+confabulates": *can wrong things be fixed cheaply after the fact.*
+
+**Known, honest limitations, not hidden:**
+- AST-fact precision degrades at this vocab/corpus scale — rare
+  identifiers fragment to near-character-level BPE tokens, producing
+  low-semantic-value edges. Not fully fixed; worked around (not solved)
+  by `grounding.py`'s `identifier_grounded`, which checks decoded strings
+  against a real symbol table instead of token boundaries.
+- The unlimited-context mechanism is structurally proven (constant
+  memory, linear time, verified directly on the Ducky checkpoint, not
+  just standalone RWKV) but this checkpoint doesn't yet *use* it for
+  long-range recall — trained exclusively on 128-token crops, so nothing
+  ever rewarded retaining information past that horizon. A real test of
+  recall needs training with cross-chunk gradient flow; not done.
+- Abstention thresholds are now calibrated against this checkpoint's own
+  confidence distribution (not borrowed production-scale numbers), and
+  the fast/slow-path split behaves sensibly (mostly answers, abstains
+  ~20% of the time on real data, not by default). The four grounding
+  signals in `grounding.py` are validated standalone but not yet wired
+  into the abstention decision itself.
+- Single run each on the architecture comparisons — consistent direction
+  and magnitude across two different domains, not seed-averaged. Real
+  signal, not yet a claim to over-trust.
+
+**Non-negotiable scope discipline:** Ducky's job is next-token prediction
+quality first. Every grounding/abstention addition earns its place by
+being cheap and checkable against something real (parse validity, a real
+symbol, a real n-gram, this checkpoint's own recalibrated confidence) —
+never by adding a second model, a vote, or an unverified heuristic dressed
+up as intelligence. If a future addition can't point at what it's checked
+against, it doesn't belong in Ducky.
