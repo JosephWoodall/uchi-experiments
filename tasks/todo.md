@@ -245,10 +245,33 @@ their own merits, not bundled with the failed swarm mechanism.
       neural/graph disagreement. No voting, no multiple experts — concepts
       5 and 6 from the weaknesses list, working off one model's own
       calibration signal.
-- [ ] Not yet done: end-to-end demo of all of Phase G wired together
-      (hybrid model + graph + model-prediction edges + user correction +
-      abstention) on a real prompt sequence, and a repeat-seed check on the
-      hybrid's win margin before fully trusting it
+- [x] End-to-end demo: hybrid model + graph + model-prediction edges + user
+      correction + abstention, all wired together, no crashes. Named the
+      hybrid architecture **Ducky** (TinyGPT + RWKV/attention hybrid +
+      unified confidence-gated graph + single-model abstention).
+- [x] Threshold calibration (`inference.py`: `calibrate_thresholds`,
+      `measure_confidence_distribution`) — first-pass thresholds (0.85
+      fast / 0.3 abstain) were copied from swarm.md's production-scale
+      numbers and were badly miscalibrated: Ducky's actual confidence
+      distribution at 700 steps has median 0.125, p85 only 0.339, max
+      0.964 — everything abstained, including in-domain prompts.
+      Percentile-based recalibration (fast=p85≈0.40, abstain=p15≈0.056)
+      grounds thresholds in this checkpoint's own behavior. Verified: fast
+      path now fires at ~23% on real training-data contexts, matching its
+      p85 target. Found a further real gap while checking, not smoothed
+      over: the slow (graph-blended) path never successfully answers,
+      only abstains, because it reuses the *raw-neural* threshold to gate
+      a *combined* (neural+graph) confidence with a different scale —
+      needs its own calibration pass, flagged as a follow-up, not fixed.
+- [x] Re-verified unlimited-context specifically on the Ducky checkpoint
+      (previously only checked on standalone pure RWKV) — state size
+      exactly 4608 bytes (3 RWKV blocks' worth; the attention block
+      correctly contributes none) from 512 through 32,768 tokens, time
+      scaling ~4x per 4x length (linear). Closes the gap flagged earlier.
+- [ ] Not yet done: separately calibrate the slow-path (graph-blended)
+      threshold; repeat-seed check on Ducky's win margin over pure dense
+      before fully trusting it; see `tasks/ducky.md` for the architecture
+      write-up
 
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one.
