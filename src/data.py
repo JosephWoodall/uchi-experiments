@@ -8,7 +8,24 @@ from pathlib import Path
 
 import torch
 
+from codec import N_CODES, train_codec
+from tokenizer import VOCAB_SIZE as TEXT_VOCAB_SIZE
 from tokenizer import Tokenizer
+
+# Unified vocab layout: text/code share the BPE vocab (offset 0, they were
+# tokenized with the same jointly-trained tokenizer already); pixel and
+# audio each get an offset range; four marker tokens (one per modality)
+# are prepended to every training crop so the model has an explicit signal
+# for which regime it's in, not just the implicit token-id range.
+TEXT_OFFSET = 0
+PIXEL_OFFSET = TEXT_VOCAB_SIZE
+AUDIO_OFFSET = PIXEL_OFFSET + N_CODES
+MARK_RJ = AUDIO_OFFSET + N_CODES
+MARK_CODE = MARK_RJ + 1
+MARK_PIXEL = MARK_RJ + 2
+MARK_AUDIO = MARK_RJ + 3
+UNIFIED_VOCAB_SIZE = MARK_RJ + 4
+MARKERS = {"rj": MARK_RJ, "code": MARK_CODE, "pixel": MARK_PIXEL, "audio": MARK_AUDIO}
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / "data" / "cache"
@@ -34,6 +51,60 @@ def load_lm_corpus(name: str, tok: Tokenizer, val_frac: float = 0.1):
     ids = _tokenize_corpus(tok, name, paths[name])
     n_val = int(len(ids) * val_frac)
     return ids[:-n_val], ids[-n_val:]
+
+
+def load_joint_modalities(tok: Tokenizer, val_frac: float = 0.1):
+    """All four modalities, offset into one shared vocab. Returns
+    {name: (train_ids, val_ids)}. Deliberately NOT concatenated into one
+    static sequence -- text/code (~50K tokens each) would drown out pixel/
+    audio (4-8K tokens) by sheer length. get_joint_batch instead samples
+    which modality each training example comes from per-example, so every
+    modality gets proportionate exposure regardless of its native size.
+    """
+    rj_train, rj_val = load_lm_corpus("rj", tok, val_frac)
+    code_train, code_val = load_lm_corpus("code", tok, val_frac)
+    pixel_train, pixel_val = load_modality_corpus("pixel", val_frac)
+    audio_train, audio_val = load_modality_corpus("audio", val_frac)
+    return {
+        "rj": (rj_train, rj_val),
+        "code": (code_train, code_val),
+        "pixel": (pixel_train + PIXEL_OFFSET, pixel_val + PIXEL_OFFSET),
+        "audio": (audio_train + AUDIO_OFFSET, audio_val + AUDIO_OFFSET),
+    }
+
+
+def get_joint_batch(ids_by_modality: dict, weights: dict, batch_size: int, block_size: int):
+    """Each of the batch_size examples independently picks a modality
+    (weighted random), then a random crop of that modality's own tensor,
+    with the modality's marker token prepended as position 0. n_future=1
+    only -- joint mode isn't wired for mtp/jepa-aux in this pass.
+    Returns x: (B, block_size), targets: (B, block_size, 1).
+    """
+    names = list(ids_by_modality.keys())
+    w = torch.tensor([weights[n] for n in names], dtype=torch.float)
+    choice_idx = torch.multinomial(w, batch_size, replacement=True)
+    xs, ys = [], []
+    for c in choice_idx.tolist():
+        name = names[c]
+        ids = ids_by_modality[name]
+        start = torch.randint(0, len(ids) - block_size, (1,)).item()
+        crop = ids[start : start + block_size]
+        x = torch.cat([torch.tensor([MARKERS[name]]), crop[:-1]])
+        xs.append(x)
+        ys.append(crop)
+    x = torch.stack(xs)
+    targets = torch.stack(ys).unsqueeze(-1)
+    return x, targets
+
+
+def load_modality_corpus(name: str, val_frac: float = 0.1):
+    """name in {'pixel', 'audio'} -> (train_ids, val_ids), code-index
+    sequences from the trained VQ-VAE codec (see codec.py). Vocab size for
+    both is codec.N_CODES, not the text tokenizer's vocab.
+    """
+    codes = train_codec(name)
+    n_val = max(1, int(len(codes) * val_frac))
+    return codes[:-n_val], codes[-n_val:]
 
 
 def load_code_pairs(tok: Tokenizer, block_size: int, val_frac: float = 0.1):

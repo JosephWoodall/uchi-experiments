@@ -54,11 +54,20 @@ production model.
 - [ ] Compare fitted exponents and per-arm deltas text vs. code
 
 ## Phase D — Combine & estimate
-- [ ] For each corpus, keep only arms that beat `base` outside noise at
-      matched params/tokens — a dud arm does not get combined
-- [ ] If ≥2 arms win on a corpus, train the combined config (`mtp` +
-      `jepa-aux` together where both apply) — this is the actual "new
-      architecture" candidate, not a fourth independent guess
+- [x] For each corpus, keep only arms that beat `base` outside noise at
+      matched params/tokens — a dud arm does not get combined.
+      **Result (500-step pass, val loss, xs/s/m): neither `mtp` nor
+      `jepa-aux` beats `base` at any matched param count on either corpus.**
+      `mtp`: consistently worse, shallower scaling exponent (0.050 vs 0.064
+      on rj, 0.041 vs 0.054 on code) — more steps (150->500) did not close
+      the gap. `jepa-aux`: apparent win at 150-300 steps was overfitting —
+      only ~86 train pairs, val loss bottoms ~step 300 then rises. Nearly
+      flat scaling exponent (0.019) — needs more paired examples before
+      it's a fair test, not more steps.
+- [ ] Nothing combined this pass — no arm cleared the bar. Before retrying:
+      widen the code corpus (more stdlib modules -> more docstring/function
+      pairs) and re-test `jepa-aux` alone; re-test `mtp` only if pursuing
+      the longer training-scale regime the original paper used
 - [ ] Latent steering probes (TSV/SAE-style, arXiv:2503.01917) on saved
       activations from the winning checkpoint(s) — measured as
       verified-accuracy + abstention-rate shift, never "hallucination-free"
@@ -68,12 +77,56 @@ production model.
 - [ ] Go/no-go on the backlog below, based on measured numbers, not vibes
 
 ## Backlog — explicitly NOT started until Phase D says so
-- [ ] MoE routing layer (only if dense sweep shows params-per-FLOP ceiling
-      actually binds at the target scale — DeepSeekMoE-style fine-grained
-      experts, arXiv:2401.06066)
-- [ ] Unified multimodal tokens: EnCodec audio codes / VQGAN pixel tokens
-      feeding the same vocab (Chameleon-style, arXiv:2405.09818) — swap
-      data source into the *same* harness, do not build new pipelines
+- [x] MoE routing layer — user overrode the gate (explicitly wanted it
+      tested regardless of the data-ceiling finding). **Result (700-step
+      base arm, matched active params via shared+top1 expert = dense MLP
+      params, 4 routed experts total): dense beats MoE beats MoE+BitLinear,
+      consistently, on both corpora.**
+      rj: dense 4.361 / MoE 4.407 / MoE+BitLinear 4.424 (val loss, lower better)
+      code: dense 4.815 / MoE 4.883 / MoE+BitLinear 4.934
+      MoE also cost ~30-60% more wall-clock per run despite matched active
+      FLOPs (naive per-expert masking loop, not a batched/grouped kernel —
+      an implementation-overhead cost, not a FLOPs one). BitLinear
+      (ported from uchi/uchi/flux/bitnet.py) added a further small, consistent
+      regression on top, expected — ternary quantization is lossy and
+      typically needs more training to recover, not less.
+      Hallucination-gap probe (id_confidence - ood_confidence, see
+      hallucination_probe.py) on the same 6 checkpoints was **inconsistent
+      between domains** (rj: dense best at +0.037, MoE+BitLinear negative
+      at -0.020; code: reversed, MoE+BitLinear best at +0.056, dense worst
+      at +0.013) — small effect sizes, single seed, 3+5 prompts. Read as
+      noise, not a finding, until re-run with multiple seeds/larger prompt
+      sets. **Net verdict: no evidence MoE is worth its cost at this scale
+      yet, on either the loss or hallucination axis** — confirms rather
+      than overturns the original params-per-FLOP-ceiling gate.
+- [x] Unified multimodal tokens — pixel + audio added. Synthetic single
+      inputs (data/pixel/image.png, data/audio/clip.wav — same "one
+      deliberate input" choice as R&J/stdlib, not scraped), small
+      from-scratch VQ-VAE codecs (codec.py, van den Oord et al. 2017,
+      not pretrained EnCodec/VQGAN — avoids a large download and keeps
+      training CPU-fast), fed through the *identical* train.py/model.py
+      pipeline as new --dataset options (pixel: 4096 tokens/64 codes,
+      audio: 8000 tokens/64 codes). Confirms the mechanism: same
+      architecture, same training loop, only the data source and vocab
+      size change.
+      **Update: joint unification done.** One shared vocab (text/code BPE
+      0-1023, pixel codes 1024-1087, audio codes 1088-1151, +4 modality
+      marker tokens 1152-1155), one model (`--dataset joint`), per-example
+      modality sampling each batch (uniform 1/4) so the ~50K-token text/code
+      corpora don't drown out the 4-8K-token pixel/audio ones. 700-step run:
+      held-out loss dropped monotonically and simultaneously across all
+      four modalities in the *same* model (rj 5.67->4.89, code 5.89->5.24,
+      pixel 3.34->2.08, audio 2.59->0.99) — the mechanism works. Seeded with
+      only a modality marker token (no other context), generation mostly
+      stayed within that modality's token range (in-lane rate, single
+      40-token sample per checkpoint, so noisy: code and audio mostly
+      92-100%, pixel and rj more variable, one sample as low as 52%/62%).
+      Real, occasional cross-modal leakage observed (e.g. rj generation
+      drifting into audio-range tokens at step 700) — boundary-respecting
+      is mostly learned, not perfect, at this toy scale/budget. Honest
+      read: unification works as a mechanism; the in-lane metric needs
+      multiple samples per checkpoint (not just one) before trusting its
+      trend, unlike the val-loss numbers which are clean.
 - [ ] Paired-view dataset for R&J (paraphrase or line↔scene-summary) if
       `jepa-aux` wins big on code and is worth extending to text
 - [ ] Full JEPA-as-primary-objective (no token decoder) — rejected for

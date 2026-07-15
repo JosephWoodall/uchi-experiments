@@ -20,7 +20,7 @@ MATRIX = {
 }
 
 
-def default_args(dataset, arm, size, steps):
+def default_args(dataset, arm, size, steps, moe_experts=0, moe_top_k=1, bitlinear_experts=False):
     checkpoint_every = max(steps // 5, 1)
     return argparse.Namespace(
         dataset=dataset,
@@ -34,14 +34,18 @@ def default_args(dataset, arm, size, steps):
         align_weight=0.5,
         log_every=checkpoint_every,
         sample_every=checkpoint_every,
+        moe_experts=moe_experts,
+        moe_top_k=moe_top_k,
+        bitlinear_experts=bitlinear_experts,
     )
 
 
 def loss_key(row):
     """Different arms log different metric names; normalize to one number
-    for the scaling-law fit (jepa-aux's comparable quantity is its LM loss,
-    not the alignment loss)."""
-    return row.get("loss", row.get("code_lm_loss"))
+    for the scaling-law fit. Always prefer held-out val loss over train
+    loss -- jepa-aux's train loss is measured on ~90 examples revisited
+    dozens of times per run and is not comparable across arms."""
+    return row.get("val_loss", row.get("val_code_lm_loss"))
 
 
 def fit_power_law(sizes_params, losses):
