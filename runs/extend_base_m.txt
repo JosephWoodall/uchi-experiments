@@ -20,3 +20,25 @@
 {'step': 3000, 'wall_s': 490.16, 'loss': 0.4592708647251129, 'val_loss': 6.260987281799316}
   sample @ 3000: 'ROMEO: I house as do banish on his man, Shall I have a world a why you with peace.’d such thee fearful hold. A banision, he’s a mind, a miseddy, a sweet'
 done in 490.6s -> /home/redleadr/workspace/uchi-experiments/runs/rj_base_m
+[code/base/m] 940,800 params, block_size=128
+{'step': 300, 'wall_s': 53.11, 'loss': 3.9797260761260986, 'val_loss': 5.035179328918457}
+  sample @ 300: "def duedg(de the Not_ 'ire good *n*, a tabs as is sample, but ar', 's thisrap(s is a float, and iterce the remush[0] and 37) and fies is two inputs. The 10"
+{'step': 600, 'wall_s': 103.44, 'loss': 3.0592410564422607, 'val_loss': 4.782059860229492}
+  sample @ 600: 'def fortionaluction): """æ quanraction to data. Return the median = variance. n = modvlection (t_stariance) + 5651.1 * m = mean(data) dev(\'379550.2'
+{'step': 900, 'wall_s': 156.66, 'loss': 2.342376708984375, 'val_loss': 4.896274185180664}
+  sample @ 900: 'def math.mid_indto-it__ == \'IP<" = \'Con_Fraction\': "CISEFLCIIIMASP<pred for fitertiformat) return self._mu '
+{'step': 1200, 'wall_s': 199.35, 'loss': 1.6343305110931396, 'val_loss': 5.055088233947754}
+  sample @ 1200: 'def _heapify()) def _sqrtprop_of_frac_frac(data, sysqrt(n, sum=T, sy) if, sys prect for sys.possqrt(ditery'
+{'step': 1500, 'wall_s': 241.88, 'loss': 1.2010996341705322, 'val_loss': 5.4164276123046875}
+  sample @ 1500: 'def __rsubclass(F\'): """T, T, T ==T, NormalDist(n, NormalDist): return T X._man for commoned return __getySx1, x2._mu, x2._mu else'
+{'step': 1800, 'wall_s': 286.47, 'loss': 0.86772221326828, 'val_loss': 5.556862545013428}
+  sample @ 1800: 'def _Fraction(n, )=None, unties twoCopper is # its lead). if and we can be looka min)) topoint_pols = j = math.gange(n - _mean(n'
+{'step': 2100, 'wall_s': 334.01, 'loss': 0.5894602537155151, 'val_loss': 5.802905941009522}
+  sample @ 2100: 'default For exacting aces, computating fin" (ware intervals.x - x) of enled return correxki - 1 < xbar - xi - xbar - yield y: ybar = fsum'
+{'step': 2400, 'wall_s': 384.02, 'loss': 0.40462160110473633, 'val_loss': 6.050631713867188}
+  sample @ 2400: "default=stant * x * x) cost results()) def slog = NormalDist(x1/monent=1.0) -',py=1/Generfunctext if redd the slice return w she. am"
+{'step': 2700, 'wall_s': 431.77, 'loss': 0.32507097721099854, 'val_loss': 6.118999290466308}
+  sample @ 2700: 'def _siftup(heap, i, but int zip is not a size, anded value. """ returned) for order, singst exactity # x its directed default= x.) return _low(x)'
+{'step': 3000, 'wall_s': 480.55, 'loss': 0.29289835691452026, 'val_loss': 6.427201461791992}
+  sample @ 3000: "def ss, c, ss, c = defintert return order d elemdf, c): try: median(mid * except Alowct), Stopulation: nlast hy cumulative') >>> variance(data, n=None):"
+done in 480.9s -> /home/redleadr/workspace/uchi-experiments/runs/code_base_m
