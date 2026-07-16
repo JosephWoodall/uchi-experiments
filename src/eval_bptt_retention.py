@@ -46,7 +46,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run-name", default="bptt_code", help="prefix used by train_bptt.py: <run-name>_best.pt / _config.json")
     p.add_argument("--dataset", default=None, help="defaults to the value recorded in <run-name>_config.json")
+    p.add_argument("--horizons", type=int, nargs="*", default=None,
+                   help="override the default 128-640 span -- streaming checkpoints can carry state "
+                        "across the whole corpus, so testing only up to 640 would understate what "
+                        "they were actually trained to use")
     args = p.parse_args()
+    horizons = args.horizons or HORIZONS
 
     cfg_dict = json.loads(open(f"../runs/{args.run_name}_config.json").read())
     dataset = args.dataset or cfg_dict["dataset"]
@@ -69,7 +74,7 @@ def main():
 
     print("does carried state (built from real history) change the prediction on the "
           "same final chunk vs a fresh/zeroed state, at increasing horizons?\n")
-    for horizon in HORIZONS:
+    for horizon in horizons:
         span = horizon + CHUNK
         if span > len(train_ids):
             print(f"  horizon={horizon:4d}: skipped, corpus too short ({len(train_ids)} < {span})")

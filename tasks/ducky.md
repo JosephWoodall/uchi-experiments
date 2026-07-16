@@ -323,6 +323,115 @@ context -> count increments; different continuation for an identical
 context -> both recorded, distinguishable; never-seen context -> None) and
 a real end-to-end SDK call with no regressions.
 
+**Four uchi-inspired reasoning mechanisms built and benchmarked, honestly.**
+Ultimate goal stated by the user: scale Ducky enough to eventually score
+well on MMLU/SWE-bench. Reality check given before building anything: at
+~10M params / ~2M training characters, Ducky is 6-7 orders of magnitude
+below the scale/data needed for either benchmark to be a meaningful target
+today -- MMLU needs broad world knowledge across 57 subjects never in this
+corpus, SWE-bench needs correct patches against large unfamiliar repos far
+beyond stdlib-snippet scale. User's response: this is intentional -- Ducky
+is the small-scale testbed for hallucination-resistance and training
+efficiency, meant to be scaled up later, matching the project's original
+premise. So: build the mechanisms now, validate honestly at Ducky's real
+scale, benchmark against a realistic (not predetermined-zero) task set.
+
+Built: (1) `mcts_lite.py` -- value-guided PUCT/UCB search over chunk-level
+generation branches, using self_critique_score as an honest proxy value
+function (uchi's own WorldModel.ValueHead is trained; nothing here is,
+same "no second model" discipline). (2) `repair_loop.py` -- sequential,
+feedback-informed retry (real syntax errors spliced into the next
+attempt's prompt, max_attempts=4 matching uchi's own retry cap), tri-state
+PASS/FAIL/ABSTAIN outcome. (3) `session_history.py` -- extractive,
+verbatim-only cross-call memory for one Ducky() instance's lifetime
+(RAM-only, opt-in via `track_history=True`). (4) `check_call_arity_consistency`
+in `grounding.py` -- narrow, deterministic, additive-only veto (same scope
+discipline as uchi's relational_reasoning.py), using the session-memory
+trie's underlying idea at the AST level instead of the token level. Every
+one of these was individually validated with real, not cherry-picked,
+test output before the combined benchmark: MCTS demonstrably branches and
+explores differently than best-of-N (different completion, different
+self-critique score); the repair loop demonstrably splices the real
+SyntaxError text into each retry; session history demonstrably persists
+and correctly compacts across calls; the arity veto demonstrably catches
+a synthetic inconsistency and correctly abstains on unparseable code.
+
+**Benchmark harness** (`bench_ducky.py`): 10 held-out docstring ->
+function-body tasks (clamp, is_palindrome, gcd, is_prime, etc.), graded by
+executing the generated code against real assert statements in a
+restricted, timeout-guarded namespace -- same shape as SWE-bench's "does
+the patch pass tests," sized to what a 10M-param model could plausibly do
+at least a little of. Harness itself verified correct first: known-correct
+canned solutions score 100%, a deliberately wrong one fails, a deliberately
+infinite loop times out via SIGALRM rather than hanging the run.
+
+**Real result, run against the actual trained checkpoint: 0/10 on all
+four mechanisms** (baseline, resample, MCTS-lite, repair loop) -- not a
+bug, a real ceiling. Every completion across every mechanism tops out at
+1-2 tokens ('return', 'if', short fragments) before abstaining; there is
+no multi-line completion for any mechanism to select among, retry into, or
+check consistency across. This concretely confirms the reality check given
+before building any of this: reasoning scaffolding amplifies existing
+generation capability, it cannot manufacture capability the base model
+doesn't have. All four mechanisms are correctly built and ready -- the
+remaining, real bottleneck is base-model scale and training data, the same
+theme that has dominated this entire project (vocab size, corpus size,
+BPTT retention all traced back to the same ceiling). Next real lever,
+consistent with the Chinchilla-ratio scaling already used for the
+proportional dense/hybrid comparison: meaningfully more parameters
+*and* proportionally more assertion-style/function-body training data,
+not more search/retry compute on top of the current checkpoint.
+
+**Streaming BPTT + gulp-size sweep + loss-shaping: rounds 4 and 5, both
+decisive, both negative.** Prior BPTT rounds (1-3, above) all used
+train_bptt.py's random-restart K-chunk windows -- every training example
+resets state to None at a random corpus position, so no example ever has
+real information before its own window boundary that would help predict
+inside it. Streaming (`train_stream_bptt.py`) fixes exactly that: batch_size
+parallel sequential streams through the real corpus, state carried
+continuously across the whole corpus, gradients truncated only every
+`gulp` steps (Transformer-XL's segment-level recurrence, Dai et al. 2019,
+arXiv:1901.02860 -- "stop gradient at the segment boundary, keep the
+memory"). A genuinely different regime, not a rerun.
+
+Swept gulp in {4, 8, 16, 32} (gradient spans 512-4096 tokens) at fixed
+total compute (~8000 chunks each, so larger gulps get proportionally fewer
+optimizer steps -- a real confound noted honestly, not hidden). Val loss
+was monotonically worse at larger gulp (5.09 -> 5.58), consistent with
+fewer steps, not necessarily meaningful about retention itself. Retention
+(`eval_bptt_retention.py`, extended to horizons up to 8192 tokens -- the
+whole point of testing streaming, since old BPTT was capped at 640):
+**KL=0.0000 at every horizon, every gulp size, including gulp=32's
+4096-token direct-gradient-flow window.** Fourth decisive negative round.
+
+Round 5: hypothesized the real cause was the *objective*, not data/steps/
+regime -- per-chunk-averaged loss lets every chunk minimize its own loss
+locally, so nothing ever requires relying on carried state. Added
+`--final-chunk-only-loss` to train_stream_bptt.py: score only the last
+chunk of each gulp; earlier chunks get real gradient only by shaping a
+useful state for it, no independent local reward. Reswept the same 4 gulp
+sizes with this objective. **Still KL=0.0000 at every horizon, every gulp
+size.** Fifth decisive negative round, now the most targeted test
+possible -- the loss literally cannot be reduced without using the
+carried state, and retention still didn't emerge.
+
+**Conclusion, now five-for-five across corpus size, step budget,
+architecture, training regime, and the objective itself: this is very
+unlikely to be a training-recipe problem at all.** The consistent
+remaining explanation is a capacity/gradient-flow limitation at this
+model's scale (~1.86-10M params): gradient backpropagating through
+4096+ steps of recurrence very plausibly vanishes to near-zero by the
+time it reaches the earliest chunks, regardless of what the objective
+rewards in principle -- the same well-documented failure mode that
+motivated LSTMs/GRUs over vanilla RNNs historically. Not fixable by
+another training-script variant at this scale; the real lever is model
+scale itself (more capacity, better-conditioned recurrence), the same
+theme that has dominated this entire project. Recommendation: stop
+active pursuit of BPTT-induced retention at toy scale -- the
+unlimited-context property remains real and structurally verified
+(constant memory, linear time), just not something this size of model can
+be trained to exploit.
+
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
 being cheap and checkable against something real (parse validity, a real

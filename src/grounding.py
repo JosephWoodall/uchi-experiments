@@ -83,6 +83,46 @@ def identifier_grounded(decoded_text: str, symbol_table: set) -> bool:
     return words[-1] in symbol_table
 
 
+def check_call_arity_consistency(text: str) -> dict:
+    """Narrow, deterministic self-consistency veto -- modeled on uchi's
+    relational_reasoning.py, which handles one specific, well-defined
+    transitive-relation class (comparatives) rather than attempting
+    general logical inference. This handles one specific, well-defined
+    class for code: does the same function name get called with the same
+    number of positional arguments everywhere in this text? Only plain
+    `name(...)` calls are checked (not `obj.method(...)`, which would need
+    real type inference to resolve which `method` is even being called) --
+    same "stay narrow, stay correct" discipline as the relation it's
+    modeled on.
+
+    Same additive-only invariant as relational_reasoning.py: this can only
+    flag an inconsistency, never confirm correctness (matching arities
+    everywhere doesn't mean the code is right, just that it isn't
+    self-contradictory on this one narrow axis) -- and it abstains
+    (consistent=None) rather than guess when the text doesn't parse at
+    all, since arity can't be checked without a real AST.
+
+    Real, honest caveat: Python allows default arguments and *args, so a
+    genuinely correct program can legitimately call the same function with
+    different argument counts. This is a heuristic that will sometimes
+    flag valid code, same kind of narrow-on-purpose tradeoff
+    relational_reasoning.py accepts for its own pattern-matched relations.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return {"consistent": None, "reason": "syntax invalid, cannot check"}
+
+    arities: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            arities.setdefault(node.func.id, set()).add(len(node.args))
+
+    conflicts = [{"name": name, "arities": sorted(counts)}
+                 for name, counts in arities.items() if len(counts) > 1]
+    return {"consistent": len(conflicts) == 0, "conflicts": conflicts}
+
+
 def build_ngram_index(ids, n: int = 4) -> set:
     """Verbatim n-grams seen in the actual source -- a cheap stand-in for
     brain.uchi's retrieval index: not embeddings/similarity search, just

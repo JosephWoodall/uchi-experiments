@@ -23,7 +23,13 @@ distribution fix that.
 import torch
 import torch.nn.functional as F
 
-from grounding import identifier_grounded, ngram_grounded, self_critique_score, verify_code_syntax
+from grounding import (
+    check_call_arity_consistency,
+    identifier_grounded,
+    ngram_grounded,
+    self_critique_score,
+    verify_code_syntax,
+)
 from session_memory import SessionTrie
 
 ABSTAIN = -1
@@ -277,6 +283,11 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
             result["syntax_valid"] = verify_code_syntax(full_text)
             if symbol_table is not None:
                 result["identifier_grounded"] = identifier_grounded(full_text, symbol_table)
+            arity_check = check_call_arity_consistency(full_text)
+            if arity_check["consistent"] is not None:
+                result["arity_consistent"] = arity_check["consistent"]
+                if arity_check["conflicts"]:
+                    result["arity_conflicts"] = arity_check["conflicts"]
 
     return result
 

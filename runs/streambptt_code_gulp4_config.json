@@ -1,0 +1,1 @@
+{"dataset": "code", "size": "m", "gulp": 4, "block_size": 128, "batch_size": 8, "attention_layers": [2], "rwkv_hybrid": true, "embedding_rank": 0, "best_val": 5.094717693328858, "best_step": 1800, "vocab_size": 8192}

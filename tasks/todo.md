@@ -404,5 +404,148 @@ their own merits, not bundled with the failed swarm mechanism.
       closes the "difference vs. improvement" gap the original swarm.md
       postmortem flagged, and that ducky.md had left as an open question.
 
+## Phase I — Training efficiency
+- [x] CPU thread tuning: 8 threads measured optimal (0.209s/step) vs default
+      10 (0.252s/step) vs 16-20 (0.91-1.31s/step, 4-6x slower from
+      thread-sync overhead) -- now train.py's default.
+- [x] `torch.compile` on the WKV scan: 2.65x steady-state speedup
+      (0.5757s/step eager -> 0.2174s/step), ~169s one-time compile cost,
+      numerically verified identical (diff ~1e-7). `UCHI_FUSE_SSM_SCAN=0`
+      escape hatch, same name uchi itself uses.
+- [x] `--compile-full-model`: compiles the whole forward pass, 3.95x
+      speedup (0.146s/step, beats uchi's own reported 3x), ~480s compile
+      cost, breakeven ~4300 steps -- opt-in, not default. Found + fixed a
+      real bug while testing (overly-broad `replace_all` renamed a
+      parameter but not its body reference).
+- [x] bf16 tested and **rejected**: only ~13% speedup against real,
+      compounding precision loss (up to 8.5% of a std dev, worst case) in
+      a 128-step sequential recurrence.
+- [x] Automated early stopping (`--patience`/`--min-delta`, default
+      disabled): verified stopping at step 900 instead of running the full
+      2000-step budget, correctly identifying the same best checkpoint
+      every prior extended sweep had to discover by running long.
+- [x] Ducky SDK setup caching (graph + calibration, keyed by checkpoint
+      mtime): 10.71s cold -> 2.24s warm, identical output confirmed.
+
+## Phase J — Scaling: vocab, depth, proportional growth
+- [x] Chinchilla-ratio pushback: 941K params was already ~125x
+      over-parameterized for a 149K-token corpus. User chose "grow data +
+      params together, proportionally" over blind 100x param growth.
+      Empirically confirmed: dense 'l' (5.03M params) on the grown corpus
+      hit 3.027 val loss vs 'm' size's 3.921 on the same corpus -- large
+      win from doing both together, not params alone.
+- [x] Code corpus grown 10 -> 49 stdlib modules (2,026,710 chars,
+      1,311 pairs) -- still hand-picked, not scraped.
+- [x] Tokenizer regrown 1024 -> 8192 vocab: real compression confirmed
+      (14 tokens vs 20 for the same test sentence; common words now single
+      tokens). Fixed a real bug: `MODEL_PREFIX`/tokenize-cache filenames
+      weren't versioned by vocab size, so the vocab-8192 run had already
+      silently overwritten the shared code/rj token-id cache with new-vocab
+      ids mid-session -- fixed by versioning both (`spm_{vocab}.model`,
+      `{name}_{vocab}.pt`).
+- [x] New 'xl' size preset (256 d_model, 12 layers, 8 heads) + rank-64
+      factored embedding (10.05M params, controls the 8x-bigger embedding
+      table's cost). New-generation hybrid xl beat dense xl again: best val
+      5.1643 vs 5.2873 (not comparable to pre-8192-vocab numbers -- higher
+      cross-entropy floor from the bigger softmax, same-vocab comparisons
+      only). Same architecture win reproduced at the new scale.
+- [x] `config.json` now records `vocab_size` explicitly (train.py) so no
+      future checkpoint needs guessing which tokenizer generation it used.
+
+## Phase K — Ducky SDK: ask()/learn(), reject-and-resample, session memory
+- [x] `ducky.py` built: `Ducky(domain, backbone).ask(prompt)` /
+      `.learn(text)`, mirrors uchi's own ask/learn contract. Both
+      `backbone="hybrid"` (default) and `"dense"` supported side by side.
+- [x] Reject-and-resample (`generate_with_resampling`, `ask(n_candidates=N)`):
+      required first fixing that `predict_next` was fully deterministic
+      (added a `temperature` param; abstention decision still always uses
+      greedy confidence, unaffected). Verified: resampling 8 candidates
+      selected a *lower*-self-critique but syntax-*valid* completion over
+      the deterministic path's higher-self-critique but invalid one (1.024
+      vs 0.149 scored) -- proof the selection logic does real work.
+- [x] Session-scoped working memory (`session_memory.py`'s `SessionTrie`):
+      catches self-contradiction within one generation (different token
+      chosen for an identical trailing context), distinct from the
+      corpus-level graph/n-gram signals. Hash-chained keys (not
+      single-token hashes -- 8192-token vocab makes those trivially
+      reversible), observability-only so far.
+- [x] Old (vocab=1024) and new (vocab=8192) checkpoint generations now
+      coexist correctly through the same SDK: `Ducky()` reads each
+      checkpoint's own `vocab_size` from its config (falling back to 1024
+      for pre-versioning checkpoints) instead of assuming the SDK default.
+      Regression-verified: rj (old-gen) and code (new-gen) both load and
+      answer correctly in the same process.
+
+## Phase L — uchi-inspired reasoning mechanisms + honest benchmark
+Stated goal: scale Ducky toward eventually scoring on MMLU/SWE-bench.
+Reality check given first: at ~10M params / ~2M training characters,
+Ducky is 6-7 orders of magnitude below the scale/data either benchmark
+needs -- agreed as intentional, Ducky is the testbed, scale-up comes
+later. Built and validated four mechanisms anyway, each checked with real
+(non-cherry-picked) output before combining them:
+- [x] `mcts_lite.py` -- PUCT/UCB search over chunk-level generation
+      branches, `self_critique_score` as an honest (untrained, unlike
+      uchi's own) value proxy. Verified: explores genuinely differently
+      than best-of-N (different completion, different score).
+- [x] `repair_loop.py` -- sequential, feedback-informed retry (real
+      SyntaxError text spliced into the next attempt's prompt, not a blind
+      resample), max_attempts=4, tri-state PASS/FAIL/ABSTAIN outcome.
+- [x] `session_history.py` -- extractive (never paraphrased), bounded,
+      RAM-only cross-call memory, opt-in via `track_history=True`.
+- [x] `check_call_arity_consistency` (`grounding.py`) -- narrow,
+      deterministic, additive-only veto (same discipline as uchi's
+      relational_reasoning.py). Verified against synthetic
+      consistent/inconsistent/unparseable cases.
+- [x] `bench_ducky.py` -- 10 held-out docstring->function-body tasks,
+      graded by executing generated code against real asserts in a
+      restricted, timeout-guarded sandbox. Harness verified correct first
+      (canned-correct=100%, wrong answer fails, infinite loop times out).
+- [x] **Real benchmark result: 0/10 on all four mechanisms** (baseline,
+      resample, MCTS-lite, repair loop). Every completion tops out at 1-2
+      tokens before abstaining -- nothing for any mechanism to search/
+      retry/remember over. Confirms the reality check: reasoning
+      scaffolding amplifies existing capability, it can't manufacture
+      capability the base model doesn't have yet. All four mechanisms are
+      built and ready for when base-model scale catches up.
+
+## Phase M — BPTT long-range retention: five rounds, all decisive, all negative
+- [x] Round 1 (K=4 chunk BPTT, 700 steps): KL=0.0000 at every horizon
+      (128-640 tokens). Diagnosed two candidate causes: attention "escape
+      hatch," insufficient steps.
+- [x] Round 2 (pure RWKV, escape hatch removed): identical null result --
+      rules out the escape hatch. 5000-step budget also tested: made
+      things *worse* (best val at step 500, then exploded), ruling out
+      "just needs more steps" in the opposite direction.
+- [x] Round 3 ("big data + big budget together," grown 387K-token corpus,
+      vocab=8192, 3000 steps with early stopping): still KL=0.0000-0.0001
+      at every horizon. Fixed a real bug found along the way:
+      `train_bptt.py` saved the *final* checkpoint to a file misleadingly
+      named `..._best.pt`.
+- [x] Round 4 (`train_stream_bptt.py`, true sequential streaming with
+      Transformer-XL-style truncated BPTT, gulp in {4,8,16,32} = 512-4096
+      token gradient spans, extended retention eval to horizons up to
+      8192 tokens): still KL=0.0000 at every horizon, every gulp size --
+      a genuinely different regime (fixes random-restart windows' inherent
+      "no example ever has real info before its own boundary" flaw), still
+      negative.
+- [x] Round 5 (`--final-chunk-only-loss`: score only the last chunk of
+      each gulp, forcing earlier chunks to matter only via the carried
+      state): still KL=0.0000 at every horizon, every gulp size -- the
+      most targeted test possible, objective can't be satisfied without
+      using the state, still no retention.
+- [x] **Conclusion: five-for-five across corpus size, step budget,
+      architecture, training regime, and the objective itself.** Very
+      unlikely to be a training-recipe problem; most consistent
+      explanation is vanishing gradients through 4000+ steps of recurrence
+      at this model's scale (~1.86-10M params) -- the same well-documented
+      reason LSTMs/GRUs replaced vanilla RNNs historically. Recommendation
+      (given to and accepted by the user): stop active pursuit at toy
+      scale. The unlimited-context property remains real and structurally
+      verified (constant memory, linear time), just not exploitable by
+      training at this size -- revisit only once base-model scale grows
+      substantially.
+
 See [`core_principle.md`](core_principle.md) for why this order and not the
-obvious one.
+obvious one. See [`ducky.md`](ducky.md) for Ducky's own architecture record
+in full detail -- this file tracks the compressed plan; ducky.md tracks the
+complete evidence trail.

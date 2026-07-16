@@ -26,6 +26,8 @@ from graph import TokenGraph, add_model_prediction_edges, build_ast_fact_edges, 
 from grounding import build_ngram_index, build_symbol_table
 from inference import calibrate_thresholds, generate_with_grounding, generate_with_resampling
 from mcts_lite import mcts_generate
+from repair_loop import generate_with_repair
+from session_history import SessionHistory
 from model import GPTConfig, TinyGPT
 from tokenizer import Tokenizer
 from train import SIZES
@@ -60,7 +62,7 @@ DEFAULT_RUNS = {
 
 class Ducky:
     def __init__(self, domain: str = "code", backbone: str = "hybrid", run_name: str = None,
-                 max_new_tokens: int = 60, use_cache: bool = True):
+                 max_new_tokens: int = 60, use_cache: bool = True, track_history: bool = False):
         if domain not in ("code", "rj"):
             raise ValueError(f"domain must be 'code' or 'rj', got {domain!r}")
         if backbone not in ("hybrid", "dense"):
@@ -68,6 +70,11 @@ class Ducky:
         self.domain = domain
         self.backbone = backbone
         self.max_new_tokens = max_new_tokens
+        # RAM-only, cross-call (not cross-process) memory -- see
+        # session_history.py. Opt-in: most callers use Ducky() for
+        # independent one-off asks, where folding prior Q&A into every new
+        # prompt would just be noise.
+        self.history = SessionHistory() if track_history else None
         run_name = run_name or DEFAULT_RUNS[(domain, backbone)]
         run_dir = ROOT / "runs" / run_name
         checkpoint_path = run_dir / "model_best.pt"
@@ -143,8 +150,8 @@ class Ducky:
                     }, f)
 
     def ask(self, prompt: str, max_new_tokens: int = None, n_candidates: int = 1,
-            temperature: float = 0.8, use_mcts: bool = False,
-            mcts_kwargs: dict = None) -> str:
+            temperature: float = 0.8, use_mcts: bool = False, mcts_kwargs: dict = None,
+            use_repair: bool = False, max_attempts: int = 4) -> str:
         """Always returns a string -- an empty one on immediate abstention,
         never an exception. Also returns the grounding metadata (syntax
         validity, self-critique, identifier grounding) as a side channel
@@ -162,10 +169,37 @@ class Ducky:
         different, stronger mechanism than best-of-N resampling: it can
         abandon a branch partway through instead of only ever comparing
         finished candidates. Takes precedence over n_candidates when set.
+
+        use_repair=True switches to a sequential, feedback-informed retry
+        loop (repair_loop.generate_with_repair): unlike resampling/MCTS,
+        each retry sees the real failure (syntax error) from the previous
+        attempt spliced into its prompt. Takes precedence over both
+        use_mcts and n_candidates when set.
+
+        If track_history was set on __init__, prior asks in this session
+        are folded into the prompt as a plain-text comment (verbatim
+        excerpts, never paraphrased -- see session_history.py), and this
+        call is recorded into that history afterward regardless of which
+        generation mode was used.
         """
-        if use_mcts:
+        effective_prompt = prompt
+        if self.history is not None:
+            context = self.history.context_string()
+            if context:
+                effective_prompt = f"# {context}\n{prompt}"
+
+        if use_repair:
+            result = generate_with_repair(
+                self.model, self.tok, self.graph, effective_prompt,
+                max_new_tokens or self.max_new_tokens, domain=self.domain,
+                fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
+                slow_abstain_threshold=self.slow_abstain_t,
+                symbol_table=self.symbol_table, ngram_index=self.ngram_index,
+                max_attempts=max_attempts,
+            )
+        elif use_mcts:
             result = mcts_generate(
-                self.model, self.tok, self.graph, prompt,
+                self.model, self.tok, self.graph, effective_prompt,
                 max_new_tokens or self.max_new_tokens, domain=self.domain,
                 fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
                 slow_abstain_threshold=self.slow_abstain_t,
@@ -174,7 +208,7 @@ class Ducky:
             )
         elif n_candidates > 1:
             result = generate_with_resampling(
-                self.model, self.tok, self.graph, prompt,
+                self.model, self.tok, self.graph, effective_prompt,
                 max_new_tokens or self.max_new_tokens, domain=self.domain,
                 fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
                 slow_abstain_threshold=self.slow_abstain_t,
@@ -183,14 +217,18 @@ class Ducky:
             )
         else:
             result = generate_with_grounding(
-                self.model, self.tok, self.graph, prompt,
+                self.model, self.tok, self.graph, effective_prompt,
                 max_new_tokens or self.max_new_tokens, domain=self.domain,
                 fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
                 slow_abstain_threshold=self.slow_abstain_t,
                 symbol_table=self.symbol_table, ngram_index=self.ngram_index,
             )
         self.last_result = result
-        return result["generated_text"] if result["n_tokens_generated"] > 0 else ""
+        response = result["generated_text"] if result["n_tokens_generated"] > 0 else ""
+        if self.history is not None:
+            self.history.record(prompt, response)
+            self.history.maybe_compact()
+        return response
 
     def learn(self, text: str) -> "Ducky":
         """Accepts a string, updates the graph immediately -- no
