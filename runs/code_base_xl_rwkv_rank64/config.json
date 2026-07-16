@@ -1,0 +1,32 @@
+{
+  "dataset": "code",
+  "arm": "base",
+  "size": "xl",
+  "block_size": 128,
+  "batch_size": 32,
+  "steps": 6000,
+  "patience": 4,
+  "min_delta": 0.0,
+  "lr": 0.0003,
+  "n_future": 2,
+  "align_weight": 0.5,
+  "log_every": 250,
+  "sample_every": 6000,
+  "moe_experts": 0,
+  "moe_top_k": 1,
+  "bitlinear_experts": false,
+  "rwkv_hybrid": true,
+  "attention_layers": [
+    3,
+    9
+  ],
+  "use_bitlinear": false,
+  "embedding_rank": 64,
+  "seed": 0,
+  "num_threads": 8,
+  "compile_full_model": false,
+  "n_params": 10053632,
+  "best_step": 1750,
+  "best_val": 5.1643024444580075,
+  "vocab_size": 8192
+}

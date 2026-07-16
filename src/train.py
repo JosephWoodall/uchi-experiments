@@ -342,7 +342,8 @@ def run(args):
     (run_dir / "samples.json").write_text(json.dumps(samples_log, indent=2))
     torch.save(model.state_dict(), run_dir / "model_final.pt")
     (run_dir / "config.json").write_text(
-        json.dumps({**vars(args), "n_params": n_params, "best_step": best_step, "best_val": best_val}, indent=2)
+        json.dumps({**vars(args), "n_params": n_params, "best_step": best_step, "best_val": best_val,
+                     "vocab_size": vocab_size}, indent=2)
     )
     total_wall = time.time() - t0
     print(f"done in {total_wall:.1f}s -> {run_dir} (best@{best_step}: {best_val:.4f})")

@@ -51,6 +51,8 @@ def main():
     p.add_argument("--log-every", type=int, default=175)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--num-threads", type=int, default=8, help="measured optimal on this machine, see train.py")
+    p.add_argument("--patience", type=int, default=0, help="0 disables early stopping, matches train.py")
+    p.add_argument("--min-delta", type=float, default=0.0)
     args = p.parse_args()
     torch.manual_seed(args.seed)
     torch.set_num_threads(args.num_threads)
@@ -83,6 +85,8 @@ def main():
         return sum(losses) / len(losses)
 
     best_val = float("inf")
+    best_step = 0
+    patience_counter = 0
     t0 = time.time()
     for step in range(1, args.steps + 1):
         model.train()
@@ -93,15 +97,28 @@ def main():
         opt.step()
         if step % args.log_every == 0 or step == args.steps:
             val_loss = eval_loss()
-            best_val = min(best_val, val_loss)
             print(f"step {step}: wall_s={time.time()-t0:.1f} loss={loss.item():.3f} val_loss={val_loss:.3f}")
+            if val_loss < best_val - args.min_delta:
+                best_val = val_loss
+                best_step = step
+                patience_counter = 0
+                # Actually the best checkpoint now (previously this filename
+                # held the final-step state regardless of whether it was
+                # best -- misleading name, silent bug, see tasks/ducky.md).
+                torch.save(model.state_dict(), f"{RUNS_DIR}/bptt_{args.dataset}_best.pt")
+            else:
+                patience_counter += 1
+                if args.patience > 0 and patience_counter >= args.patience:
+                    print(f"early stopping at step {step}: no improvement for "
+                          f"{args.patience} checkpoints (best was step {best_step}: {best_val:.4f})")
+                    break
 
-    print(f"done in {time.time()-t0:.1f}s, best val_loss={best_val:.4f}")
-    torch.save(model.state_dict(), f"{RUNS_DIR}/bptt_{args.dataset}_best.pt")
+    print(f"done in {time.time()-t0:.1f}s, best val_loss={best_val:.4f} at step {best_step}")
     with open(f"{RUNS_DIR}/bptt_{args.dataset}_config.json", "w") as f:
         json.dump({"dataset": args.dataset, "size": args.size, "k_chunks": args.k_chunks,
                     "block_size": args.block_size, "attention_layers": args.attention_layers,
-                    "rwkv_hybrid": True, "best_val": best_val}, f)
+                    "rwkv_hybrid": True, "best_val": best_val, "best_step": best_step,
+                    "vocab_size": tok.vocab_size}, f)
 
 
 if __name__ == "__main__":

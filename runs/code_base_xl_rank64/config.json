@@ -24,5 +24,6 @@
   "compile_full_model": false,
   "n_params": 10051072,
   "best_step": 2500,
-  "best_val": 5.287274551391602
+  "best_val": 5.287274551391602,
+  "vocab_size": 8192
 }

@@ -25,6 +25,7 @@ from data import load_lm_corpus
 from graph import TokenGraph, add_model_prediction_edges, build_ast_fact_edges, build_graph
 from grounding import build_ngram_index, build_symbol_table
 from inference import calibrate_thresholds, generate_with_grounding, generate_with_resampling
+from mcts_lite import mcts_generate
 from model import GPTConfig, TinyGPT
 from tokenizer import Tokenizer
 from train import SIZES
@@ -38,9 +39,18 @@ SETUP_CACHE_DIR = ROOT / "data" / "cache" / "ducky_setup"
 # attention-only baseline it's compared against, exposed here so you can
 # run the same SDK against either backbone and see the difference directly,
 # not just read about it in the results table.
+#
+# code/* point at the new-generation checkpoints (vocab=8192, xl depth,
+# rank-64 embedding, grown corpus) -- hybrid beat dense here too (best val
+# 5.1643 vs 5.2873), same architecture win as the old generation, now
+# confirmed at the new scale. rj/* still point at the old (vocab=1024)
+# generation -- rj hasn't been retrained under the new vocab/depth yet;
+# self.tok's vocab_size is read per-checkpoint from config.json (falling
+# back to 1024 for checkpoints that predate that field), so old and new
+# generations load correctly side by side.
 DEFAULT_RUNS = {
-    ("code", "hybrid"): "code_base_m_rwkv",
-    ("code", "dense"): "code_base_m",
+    ("code", "hybrid"): "code_base_xl_rwkv_rank64",
+    ("code", "dense"): "code_base_xl_rank64",
     ("rj", "hybrid"): "rj_base_m",  # note: this checkpoint is hybrid despite the
     # plain-looking name -- a relic of an earlier naming-collision bug (fixed for
     # all runs since), see tasks/ducky.md
@@ -62,8 +72,12 @@ class Ducky:
         run_dir = ROOT / "runs" / run_name
         checkpoint_path = run_dir / "model_best.pt"
 
-        self.tok = Tokenizer()
         cfg_dict = json.loads((run_dir / "config.json").read_text())
+        # vocab_size is only recorded in config.json from the 8192-vocab
+        # generation onward -- checkpoints trained before that fix predate
+        # vocab versioning entirely and were all trained under vocab=1024,
+        # so that's the correct fallback, not the SDK's current default.
+        self.tok = Tokenizer(vocab_size=cfg_dict.get("vocab_size", 1024))
         size_cfg = SIZES[cfg_dict["size"]]
         cfg = GPTConfig(
             vocab_size=self.tok.vocab_size,
@@ -96,8 +110,14 @@ class Ducky:
                 cached = None  # checkpoint changed since this was cached -- rebuild
 
         code_source = (ROOT / "data" / "code" / "corpus.txt").read_text()
-        rj_ids = torch.load(ROOT / "data" / "cache" / f"rj_{self.tok.vocab_size}.pt")
-        code_ids = torch.load(ROOT / "data" / "cache" / f"code_{self.tok.vocab_size}.pt")
+        # load_lm_corpus creates the vocab-versioned cache file if it doesn't
+        # exist yet -- a raw torch.load here would assume it already does,
+        # which broke the first time a checkpoint used a vocab size nothing
+        # had tokenized the full corpus under yet.
+        rj_train_ids, rj_val_ids = load_lm_corpus("rj", self.tok)
+        code_train_ids, code_val_ids = load_lm_corpus("code", self.tok)
+        rj_ids = torch.cat([rj_train_ids, rj_val_ids])
+        code_ids = torch.cat([code_train_ids, code_val_ids])
         domain_ids = code_ids if domain == "code" else rj_ids
         self.symbol_table = build_symbol_table(code_source) if domain == "code" else None
         self.ngram_index = build_ngram_index(domain_ids, n=4)
@@ -123,7 +143,8 @@ class Ducky:
                     }, f)
 
     def ask(self, prompt: str, max_new_tokens: int = None, n_candidates: int = 1,
-            temperature: float = 0.8) -> str:
+            temperature: float = 0.8, use_mcts: bool = False,
+            mcts_kwargs: dict = None) -> str:
         """Always returns a string -- an empty one on immediate abstention,
         never an exception. Also returns the grounding metadata (syntax
         validity, self-critique, identifier grounding) as a side channel
@@ -135,8 +156,23 @@ class Ducky:
         can actually differ) and keep the one with the best self-critique
         (+ syntax-validity bonus for code) score, rather than only reporting
         those signals after the fact on a single generation.
+
+        use_mcts=True switches to value-guided search over chunk-level
+        generation branches (mcts_lite.mcts_generate) instead -- a
+        different, stronger mechanism than best-of-N resampling: it can
+        abandon a branch partway through instead of only ever comparing
+        finished candidates. Takes precedence over n_candidates when set.
         """
-        if n_candidates > 1:
+        if use_mcts:
+            result = mcts_generate(
+                self.model, self.tok, self.graph, prompt,
+                max_new_tokens or self.max_new_tokens, domain=self.domain,
+                fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
+                slow_abstain_threshold=self.slow_abstain_t,
+                symbol_table=self.symbol_table, ngram_index=self.ngram_index,
+                **(mcts_kwargs or {}),
+            )
+        elif n_candidates > 1:
             result = generate_with_resampling(
                 self.model, self.tok, self.graph, prompt,
                 max_new_tokens or self.max_new_tokens, domain=self.domain,

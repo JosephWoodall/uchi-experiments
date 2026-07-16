@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 
 from grounding import identifier_grounded, ngram_grounded, self_critique_score, verify_code_syntax
+from session_memory import SessionTrie
 
 ABSTAIN = -1
 
@@ -121,10 +122,31 @@ def _choose(probs: torch.Tensor, temperature: float) -> int:
     return torch.multinomial(tempered, num_samples=1).item()
 
 
+def _apply_session_memory(session_memory: SessionTrie, context: list, chosen_token: int, info: dict) -> None:
+    """session_memory is the working-memory trie (session_memory.py) -- a
+    third grounding signal, distinct from the graph and from n-gram
+    grounding: both of those check against the training corpus, this
+    checks against what THIS generation has already produced. If the
+    exact trailing context has come up before in this same generation,
+    session_consistent=False flags that a different token got chosen this
+    time for the identical context -- self-contradiction, not corpus
+    disagreement. Always records the observation afterward regardless of
+    the consistency outcome, so future steps in this generation can check
+    against it too.
+    """
+    if session_memory is None:
+        return
+    prior = session_memory.lookup(context)
+    if prior is not None:
+        info["session_consistent"] = chosen_token in prior
+    session_memory.observe(context, chosen_token)
+
+
 def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAULT_FAST_THRESHOLD,
                   abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD,
                   slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4,
-                  ngram_index: set = None, ngram_n: int = 4, temperature: float = 0.0):
+                  ngram_index: set = None, ngram_n: int = 4, temperature: float = 0.0,
+                  session_memory: SessionTrie = None):
     """Returns (token_id or ABSTAIN, info_dict) for the next token after idx.
     All three thresholds should come from calibrate_thresholds() for this
     specific (model, graph) pair, not the module defaults. slow_abstain_threshold
@@ -138,6 +160,13 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     otherwise-disagreement-triggered abstention, but does not override a
     pure low-confidence abstention (that's about overall uncertainty, not
     about whether the disagreement heuristic specifically was wrong).
+
+    session_memory (session_memory.SessionTrie), if given, is consulted
+    and updated on every non-abstain return -- see _apply_session_memory.
+    Observability only for now: it annotates info, it does not itself
+    trigger abstention or override the chosen token, matching how
+    self-critique/syntax-validity started as report-only signals before
+    reject-and-resample gave them teeth.
 
     temperature=0 (default) is fully deterministic -- every prior use of
     this function (and every number reported this session) assumed that.
@@ -159,6 +188,7 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         info = {"path": "fast", "confidence": round(neural_conf, 4)}
         if ngram_index is not None:
             info["ngram_grounded"] = ngram_grounded(idx[0].tolist() + [neural_pred], ngram_index, ngram_n)
+        _apply_session_memory(session_memory, idx[0].tolist(), neural_pred, info)
         return neural_pred, info
 
     last_token = idx[0, -1].item()
@@ -171,6 +201,7 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         info = {"path": "slow", "confidence": round(neural_conf, 4), "graph_coverage": False}
         if ngram_index is not None:
             info["ngram_grounded"] = ngram_grounded(idx[0].tolist() + [neural_pred], ngram_index, ngram_n)
+        _apply_session_memory(session_memory, idx[0].tolist(), neural_pred, info)
         return neural_pred, info
 
     graph_scores = torch.zeros_like(neural_logits)
@@ -199,6 +230,7 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         info["ngram_grounded"] = grounded
         if not consistent and grounded:
             info["reason"] = "disagreement rescued by n-gram grounding"
+    _apply_session_memory(session_memory, idx[0].tolist(), combined_pred, info)
     return combined_pred, info
 
 
@@ -218,10 +250,16 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
     prompt_len = ids.size(1)
     generated = []
     abstained_at = None
+    # Fresh per call, discarded when this returns -- session-scoped, not
+    # persisted (see session_memory.py). Seeding it with the prompt's own
+    # tokens would double-count the prompt as "already generated"; it
+    # starts empty and only accumulates tokens this call actually produces.
+    session_memory = SessionTrie()
 
     for _ in range(max_new_tokens):
         next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
-                                      slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n)
+                                      slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n,
+                                      session_memory=session_memory)
         if next_id == ABSTAIN:
             abstained_at = len(generated)
             break
@@ -284,10 +322,11 @@ def generate_with_resampling(model, tok, graph, prompt: str, max_new_tokens: int
         prompt_len = ids.size(1)
         generated = []
         abstained_at = None
+        session_memory = SessionTrie()  # fresh per candidate -- each is its own independent generation
         for _ in range(max_new_tokens):
             next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
                                           slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n,
-                                          temperature=temperature)
+                                          temperature=temperature, session_memory=session_memory)
             if next_id == ABSTAIN:
                 abstained_at = len(generated)
                 break

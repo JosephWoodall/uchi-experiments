@@ -122,6 +122,37 @@ confabulates": *can wrong things be fixed cheaply after the fact.*
   bottleneck is the other hypothesis (700 BPTT steps is too little signal
   to shift learned decay rates), by elimination, not by assumption. A much
   larger BPTT step budget is the remaining untested lever.
+  **Third round, "big data + big budget together," also decisive, also
+  negative**: reran on the fully-grown 49-module corpus (387K tokens
+  available, vs the much smaller corpus every earlier round used) at
+  vocab=8192, 3000-step budget with early stopping (best@1250, val loss
+  5.0054, stopped at 2750 once it started rising again). New eval script
+  (`eval_bptt_retention.py`, generalizes test_unlimited_context.py's KL
+  check across 5 horizons instead of one) still found KL=0.0000-0.0001 at
+  every horizon (128 through 640 tokens) — the carried-state and
+  fresh-state predictions pick the identical top token every time, not
+  just a similar one. Bigger data and enough steps to reach a real,
+  early-stopped optimum still didn't move this. Also fixed a real bug
+  found while re-running this: `train_bptt.py` saved the *final* checkpoint
+  to a file misleadingly named `..._best.pt` (flagged but left unfixed
+  after the second round); now tracks and saves the actual best checkpoint
+  with early stopping, matching train.py's pattern. **Conclusion, now
+  three-for-three across data scale, step budget, and architecture
+  (hybrid vs pure-RWKV): this BPTT training setup does not induce
+  cross-chunk retention in this model, under any tested combination of
+  those three levers.** Not fully explained -- the training loss itself
+  does improve substantially (loss 5.33 -> 2.23 over the run), so the
+  model is learning something real from the objective, just not
+  "carry information forward across chunk boundaries in a way a fresh
+  state wouldn't already produce." Remaining untested candidate causes:
+  the loss may be achievable entirely by local (within-chunk) pattern
+  matching with no gradient signal ever favoring cross-chunk information
+  flow specifically, or the state-carrying mechanism's gradient path may
+  need an explicit loss term that rewards it (e.g. only computing loss on
+  the final chunk, forcing all earlier chunks to earn their keep purely
+  through the carried state) rather than the current per-chunk-averaged
+  loss, where every chunk can independently minimize its own loss without
+  ever needing the others.
 - Grounding/abstention validated as a genuine net positive, not just
   mechanically sound: selective-prediction check shows accuracy on
   answered (non-abstained) tokens is meaningfully higher than the
@@ -209,6 +240,38 @@ Ducky SDK also now supports `backbone="dense"` alongside the default
 `"hybrid"` -- same domain, same API, either backbone, so the dense-vs-Ducky
 comparison can be run directly through the SDK, not just read from a table.
 
+**New-generation Ducky trained** (vocab=8192, 12 layers, rank-64 factored
+embedding, no BitLinear, grown 49-module corpus): hybrid xl beat dense xl
+again -- best val 5.1643 (step 1750) vs 5.2873 (step 2500), the same
+architecture win reproduced at the new scale. (These loss values aren't
+comparable to earlier sub-3.1 numbers -- an 8192-way softmax has a much
+higher cross-entropy floor than 1024-way, especially early in training;
+same-vocab comparisons only.) `ducky.py`'s `DEFAULT_RUNS` now points
+code/hybrid and code/dense at these new checkpoints; rj/* stays on the old
+(vocab=1024) generation since rj hasn't been retrained at the new scale yet.
+
+Getting both generations to load correctly through one SDK surfaced three
+real bugs, each fixed:
+1. `config.json` never recorded which vocab size a checkpoint was trained
+   under -- `train.py` now saves it explicitly; the two xl checkpoints
+   trained just before that fix landed were patched by hand.
+2. `data.py`'s per-corpus tokenize cache (`data/cache/{name}.pt`) wasn't
+   versioned by vocab size either -- the vocab-8192 training run had
+   already silently overwritten it with new-vocab ids mid-session, which
+   would have broken loading any 1024-vocab checkpoint through that path.
+   Fixed the same way: `{name}_{vocab_size}.pt`.
+3. `ducky.py` assumed that cache file already existed (raw `torch.load`)
+   instead of calling `load_lm_corpus` (which creates it) -- broke the
+   first time a checkpoint used a vocab size nothing had tokenized the
+   full corpus under yet. Fixed by calling `load_lm_corpus` directly.
+
+End-to-end regression check confirms all of this holds together: the new
+vocab=8192 xl checkpoints (hybrid and dense) and the old vocab=1024 rj
+checkpoint all load and answer correctly through the same `Ducky()`
+constructor in the same process, each picking its own correct vocab size
+from its own config -- old and new generations coexist, neither broke the
+other.
+
 Reject-and-resample built (`inference.py`'s `generate_with_resampling`, wired
 into `ducky.py`'s `ask(n_candidates=N)`): the grounding signals were
 previously a smoke detector (reported after the fact) — this makes them a
@@ -233,6 +296,32 @@ vocab-8192 training run silently overwrote it with new-vocab ids, breaking
 any future load of a 1024-vocab checkpoint through that path — same bug
 class as the tokenizer `MODEL_PREFIX` issue, fixed the same way
 (`{name}_{vocab_size}.pt`).
+
+Session-scoped working memory built (`session_memory.py`'s `SessionTrie`,
+wired into `inference.py` as a third grounding signal): distinct from
+`TokenGraph` (corpus-level, static -- same regardless of position in a
+generation) and from `ngram_index` (also corpus-level). This tracks only
+what THIS generation has already produced, catching self-contradiction
+(a different token chosen for an identical trailing context within one
+generation) that neither of the other two signals can see. Built fresh per
+`generate_with_grounding`/`generate_with_resampling` call, discarded when
+it returns -- deliberately never persisted to disk (explicit scope
+decision: this is a per-generation working memory, not a cross-session
+one). Keys are blake2b digests chained through the whole path (parent
+digest -> child digest), not a hash of one token in isolation -- with only
+8192 possible tokens a single-token hash would be trivially reversible by
+brute force; chaining means guessing a node at depth d requires guessing
+the whole d-token prefix (honest caveat: this is obfuscation, not real
+cryptographic security -- no secret key, no adversary model, nothing here
+is ever persisted or transmitted). `max_depth` bounds both memory and
+per-token insert cost, so total work grows linearly with tokens generated,
+not quadratically. Observability only so far, same incremental pattern as
+self-critique/syntax-validity before reject-and-resample gave them teeth:
+annotates `session_consistent` in the info dict, doesn't yet override the
+chosen token or trigger abstention. Verified with unit tests (repeat
+context -> count increments; different continuation for an identical
+context -> both recorded, distinguishable; never-seen context -> None) and
+a real end-to-end SDK call with no regressions.
 
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
