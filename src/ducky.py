@@ -58,14 +58,19 @@ DEFAULT_RUNS = {
     # plain-looking name -- a relic of an earlier naming-collision bug (fixed for
     # all runs since), see tasks/ducky.md
     ("rj", "dense"): "rj_base_m_seed1",
+    # ("text", "hybrid")/("text", "dense") intentionally not yet present --
+    # "text" (rj + Gutenberg) has no trained checkpoint yet. Add both here
+    # once that training run completes; Ducky(domain="text") will raise a
+    # clear KeyError until then rather than silently pointing at the wrong
+    # (much smaller, Shakespeare-only) checkpoint.
 }
 
 
 class Ducky:
     def __init__(self, domain: str = "code", backbone: str = "hybrid", run_name: str = None,
                  max_new_tokens: int = 60, use_cache: bool = True, track_history: bool = False):
-        if domain not in ("code", "rj"):
-            raise ValueError(f"domain must be 'code' or 'rj', got {domain!r}")
+        if domain not in ("code", "rj", "text"):
+            raise ValueError(f"domain must be 'code', 'rj', or 'text', got {domain!r}")
         if backbone not in ("hybrid", "dense"):
             raise ValueError(f"backbone must be 'hybrid' or 'dense', got {backbone!r}")
         self.domain = domain
@@ -122,9 +127,13 @@ class Ducky:
         # exist yet -- a raw torch.load here would assume it already does,
         # which broke the first time a checkpoint used a vocab size nothing
         # had tokenized the full corpus under yet.
-        rj_train_ids, rj_val_ids = load_lm_corpus("rj", self.tok)
+        # Text-side ids for the graph: "text" (rj + Gutenberg) if that's the
+        # active domain, else plain "rj" -- matches existing behavior for
+        # code/rj domains exactly, just extends it to the new combined one.
+        text_domain_name = "text" if domain == "text" else "rj"
+        text_train_ids, text_val_ids = load_lm_corpus(text_domain_name, self.tok)
         code_train_ids, code_val_ids = load_lm_corpus("code", self.tok)
-        rj_ids = torch.cat([rj_train_ids, rj_val_ids])
+        rj_ids = torch.cat([text_train_ids, text_val_ids])
         code_ids = torch.cat([code_train_ids, code_val_ids])
         domain_ids = code_ids if domain == "code" else rj_ids
         self.symbol_table = build_symbol_table(code_source) if domain == "code" else None

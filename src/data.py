@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / "data" / "cache"
 
 
-def _tokenize_corpus(tok: Tokenizer, name: str, path: Path) -> torch.Tensor:
+def _tokenize_corpus(tok: Tokenizer, name: str, text: str) -> torch.Tensor:
     """Cache filename is versioned by vocab_size -- the fixed name (name.pt)
     used to be shared across every tokenizer version, so growing the vocab
     (1024 -> 8192) silently overwrote the cache with new-vocab ids and broke
@@ -43,19 +43,28 @@ def _tokenize_corpus(tok: Tokenizer, name: str, path: Path) -> torch.Tensor:
     cache_path = CACHE_DIR / f"{name}_{tok.vocab_size}.pt"
     if cache_path.exists():
         return torch.load(cache_path)
-    ids = tok.encode(path.read_text())
+    ids = tok.encode(text)
     t = torch.tensor(ids, dtype=torch.long)
     torch.save(t, cache_path)
     return t
 
 
 def load_lm_corpus(name: str, tok: Tokenizer, val_frac: float = 0.1):
-    """name in {'rj', 'code'} -> (train_ids, val_ids), 1D long tensors."""
-    paths = {
-        "rj": ROOT / "data" / "text" / "romeo_and_juliet.txt",
-        "code": ROOT / "data" / "code" / "corpus.txt",
+    """name in {'rj', 'text', 'code'} -> (train_ids, val_ids), 1D long tensors.
+    'rj' stays Shakespeare-only (backward compat with old-generation
+    checkpoints trained on just that); 'text' is the new, bigger combined
+    domain (rj + curated Gutenberg texts) -- added alongside 'rj', not a
+    redefinition of it, so nothing that depends on 'rj' meaning just
+    Shakespeare breaks.
+    """
+    rj_path = ROOT / "data" / "text" / "romeo_and_juliet.txt"
+    gutenberg_path = ROOT / "data" / "text" / "gutenberg_corpus.txt"
+    text_sources = {
+        "rj": lambda: rj_path.read_text(),
+        "text": lambda: rj_path.read_text() + "\n" + (gutenberg_path.read_text() if gutenberg_path.exists() else ""),
+        "code": lambda: (ROOT / "data" / "code" / "corpus.txt").read_text(),
     }
-    ids = _tokenize_corpus(tok, name, paths[name])
+    ids = _tokenize_corpus(tok, name, text_sources[name]())
     n_val = int(len(ids) * val_frac)
     return ids[:-n_val], ids[-n_val:]
 

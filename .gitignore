@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+# Regenerable caches -- tokenized corpus tensors, Ducky SDK setup (graph +
+# calibration), rebuilt automatically from source data/tokenizer when
+# missing. Not source of truth, and some exceed GitHub's 100MB file limit.
+data/cache/

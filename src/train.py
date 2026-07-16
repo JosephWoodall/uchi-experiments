@@ -58,6 +58,7 @@ SIZES = {
 
 PROMPTS = {
     "rj": "ROMEO:",
+    "text": "ROMEO:",  # rj + curated Gutenberg texts -- rj's own opening prompt still works as a sanity check
     "code": "def ",
 }
 
@@ -362,7 +363,7 @@ def run(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", choices=["rj", "code", "pixel", "audio", "joint"], required=True)
+    p.add_argument("--dataset", choices=["rj", "text", "code", "pixel", "audio", "joint"], required=True)
     p.add_argument("--arm", choices=["base", "mtp", "jepa-aux"], required=True)
     p.add_argument("--size", choices=list(SIZES), default="xs")
     p.add_argument("--block-size", type=int, default=128)
