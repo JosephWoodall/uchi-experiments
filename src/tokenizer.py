@@ -38,8 +38,10 @@ def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
     TOK_DIR.mkdir(parents=True, exist_ok=True)
     rj = (ROOT / "data" / "text" / "romeo_and_juliet.txt").read_text()
     code = (ROOT / "data" / "code" / "corpus.txt").read_text()
+    gutenberg_path = ROOT / "data" / "text" / "gutenberg_corpus.txt"
+    gutenberg = gutenberg_path.read_text() if gutenberg_path.exists() else ""
     combined_path = TOK_DIR / f"_combined_{vocab_size}.txt"
-    combined_path.write_text(rj + "\n" + code)
+    combined_path.write_text(rj + "\n" + gutenberg + "\n" + code)
 
     spm.SentencePieceTrainer.train(
         input=str(combined_path),

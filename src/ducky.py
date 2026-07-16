@@ -28,6 +28,7 @@ from inference import calibrate_thresholds, generate_with_grounding, generate_wi
 from mcts_lite import mcts_generate
 from repair_loop import generate_with_repair
 from session_history import SessionHistory
+from synthetic_relations import build_call_graph, inject_context
 from model import GPTConfig, TinyGPT
 from tokenizer import Tokenizer
 from train import SIZES
@@ -128,6 +129,11 @@ class Ducky:
         domain_ids = code_ids if domain == "code" else rj_ids
         self.symbol_table = build_symbol_table(code_source) if domain == "code" else None
         self.ngram_index = build_ngram_index(domain_ids, n=4)
+        # Whole-identifier call graph for retrieval-injection (synthetic_relations.py)
+        # -- distinct from self.graph (TokenGraph, BPE-token-level, consulted via
+        # logit blending): this is used to pull real facts into the prompt as
+        # text, at whole-function-name granularity.
+        self.call_graph = build_call_graph(code_source) if domain == "code" else None
 
         if cached is not None:
             self.graph = TokenGraph()
@@ -151,7 +157,8 @@ class Ducky:
 
     def ask(self, prompt: str, max_new_tokens: int = None, n_candidates: int = 1,
             temperature: float = 0.8, use_mcts: bool = False, mcts_kwargs: dict = None,
-            use_repair: bool = False, max_attempts: int = 4) -> str:
+            use_repair: bool = False, max_attempts: int = 4,
+            use_retrieval: bool = False, max_facts: int = 3) -> str:
         """Always returns a string -- an empty one on immediate abstention,
         never an exception. Also returns the grounding metadata (syntax
         validity, self-critique, identifier grounding) as a side channel
@@ -181,12 +188,21 @@ class Ducky:
         excerpts, never paraphrased -- see session_history.py), and this
         call is recorded into that history afterward regardless of which
         generation mode was used.
+
+        use_retrieval=True (code domain only) surfaces real call-graph
+        facts relevant to whatever's already mentioned in the prompt as
+        literal text prepended to it (synthetic_relations.inject_context)
+        -- not blended into logits like self.graph is. Composable with
+        every other option above; this only changes what the prompt looks
+        like before generation starts.
         """
         effective_prompt = prompt
         if self.history is not None:
             context = self.history.context_string()
             if context:
                 effective_prompt = f"# {context}\n{prompt}"
+        if use_retrieval and self.call_graph is not None:
+            effective_prompt = inject_context(effective_prompt, self.call_graph, max_facts=max_facts)
 
         if use_repair:
             result = generate_with_repair(
