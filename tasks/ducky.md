@@ -193,6 +193,47 @@ bfloat16 tested and **rejected**, not adopted: only ~13% speedup
 across 128 timesteps, where per-step error can compound. Risk/reward
 doesn't clear the bar next to `torch.compile`'s exact-correctness win.
 
+Automated early stopping added (`train.py`, `--patience`/`--min-delta`,
+default disabled to match every run so far): verified stopping at step 900
+instead of running the full 2000-step budget, correctly identifying the
+same best checkpoint (step 700) every extended sweep this session had to
+discover by running long and reading off the best point afterward.
+
+Ducky SDK (`ducky.py`) setup caching added: graph-building (300 forward
+passes) + threshold calibration (500+ more) cached to disk, keyed by
+checkpoint mtime so a retrained/overwritten checkpoint invalidates the
+cache automatically rather than serving stale data. Verified: 10.71s cold
+-> 2.24s warm, identical thresholds/graph/output confirmed, not just faster.
+
+Ducky SDK also now supports `backbone="dense"` alongside the default
+`"hybrid"` -- same domain, same API, either backbone, so the dense-vs-Ducky
+comparison can be run directly through the SDK, not just read from a table.
+
+Reject-and-resample built (`inference.py`'s `generate_with_resampling`, wired
+into `ducky.py`'s `ask(n_candidates=N)`): the grounding signals were
+previously a smoke detector (reported after the fact) — this makes them a
+sprinkler system (used to pick the output). Required first fixing that
+`predict_next` was fully deterministic (always argmax): a `temperature`
+parameter was added so repeated calls on the same prompt can genuinely
+differ, while the abstain/don't-abstain decision itself still always uses
+the greedy-argmax confidence (temperature only affects which token gets
+returned once the model doesn't abstain) — sampling diversity shouldn't be
+allowed to destabilize the calibrated abstention behavior itself. Verified
+on a real checkpoint (`code_base_l`, dense, best val 3.027): for one prompt,
+the deterministic path (temperature=0) returned a syntactically-invalid
+completion (self-critique 0.149); resampling 8 candidates at temperature=0.8
+selected a different candidate with *lower* self-critique (0.024) but valid
+syntax, correctly outscoring it via the decisive syntax-validity bonus
+(1.024 vs 0.149) — proof the selection logic, not just the sampling, is
+doing real work. Abstained candidates score `-inf` internally and are never
+selected over a candidate that produced anything.
+Also found and fixed, while testing this: `data.py`'s per-corpus tokenize
+cache (`data/cache/{name}.pt`) wasn't versioned by vocab size, so the
+vocab-8192 training run silently overwrote it with new-vocab ids, breaking
+any future load of a 1024-vocab checkpoint through that path — same bug
+class as the tokenizer `MODEL_PREFIX` issue, fixed the same way
+(`{name}_{vocab_size}.pt`).
+
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
 being cheap and checkable against something real (parse validity, a real

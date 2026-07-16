@@ -2,10 +2,14 @@
 modules: chosen for being pure-Python, idiomatic, and well-docstringed
 (PSF license) -- not a scrape, a hand-picked list, same as the original 5.
 
-Grown from 5 to 10 modules (~150KB -> ~425KB) to reduce signal-starvation
-in a few diagnosed places (AST-fact fragmentation, sparse model-prediction
-edges, thin confidence distributions) -- deliberately still small and
-hand-picked, not a switch to broad/scraped data.
+Grown three times now: 5 -> 10 -> 49 modules (~150KB -> ~425KB -> ~2MB).
+This third growth is deliberately bigger (~4.7x) than the second (~2.8x) --
+motivated by "make Ducky denser" running into the Chinchilla mismatch
+(940K params was already ~125x over-parameterized for the 149K-token
+corpus): the honest fix is proportional data+param growth, not params
+alone. Still a hand-picked, general-purpose, non-niche subset of the
+stdlib (avoiding debugging-tool modules like pdb/pickletools and giant
+doc/data dumps like pydoc_data), not a switch to scraped/broad data.
 
 The existing tokenizer/vocab is NOT retrained here -- growing the corpus
 this way keeps every checkpoint trained so far loadable and comparable
@@ -25,6 +29,15 @@ from pathlib import Path
 MODULES = [
     "statistics.py", "textwrap.py", "heapq.py", "bisect.py", "fractions.py",
     "enum.py", "dataclasses.py", "contextlib.py", "functools.py", "pathlib/__init__.py",
+    "argparse.py", "difflib.py", "ipaddress.py", "inspect.py", "subprocess.py",
+    "doctest.py", "json/decoder.py", "json/encoder.py", "json/__init__.py",
+    "csv.py", "configparser.py", "logging/__init__.py", "unittest/case.py",
+    "collections/__init__.py", "shutil.py", "tempfile.py",
+    "decimal.py", "queue.py", "threading.py", "datetime.py", "calendar.py",
+    "random.py", "uuid.py", "base64.py", "gzip.py", "glob.py",
+    "fnmatch.py", "shlex.py", "pprint.py", "reprlib.py", "weakref.py",
+    "copy.py", "numbers.py", "traceback.py", "warnings.py", "abc.py",
+    "graphlib.py", "typing.py", "ast.py",
 ]
 MIN_DOC_CHARS = 20
 

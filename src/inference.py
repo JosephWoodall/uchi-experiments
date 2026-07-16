@@ -107,10 +107,24 @@ def calibrate_thresholds(model, graph, val_ids, block_size: int, fast_percentile
     return fast_t, abstain_t, slow_abstain_t
 
 
+def _choose(probs: torch.Tensor, temperature: float) -> int:
+    """temperature=0 -> argmax (deterministic, the original behavior).
+    temperature>0 -> multinomial sample, tempered. The abstention decision
+    elsewhere always uses the deterministic argmax confidence regardless --
+    only which *token* gets returned when not abstaining is affected here,
+    so temperature adds output diversity without destabilizing when the
+    model abstains.
+    """
+    if temperature <= 0:
+        return probs.argmax(dim=-1).item()
+    tempered = torch.softmax(torch.log(probs + 1e-12) / temperature, dim=-1)
+    return torch.multinomial(tempered, num_samples=1).item()
+
+
 def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAULT_FAST_THRESHOLD,
                   abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD,
                   slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4,
-                  ngram_index: set = None, ngram_n: int = 4):
+                  ngram_index: set = None, ngram_n: int = 4, temperature: float = 0.0):
     """Returns (token_id or ABSTAIN, info_dict) for the next token after idx.
     All three thresholds should come from calibrate_thresholds() for this
     specific (model, graph) pair, not the module defaults. slow_abstain_threshold
@@ -124,6 +138,12 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     otherwise-disagreement-triggered abstention, but does not override a
     pure low-confidence abstention (that's about overall uncertainty, not
     about whether the disagreement heuristic specifically was wrong).
+
+    temperature=0 (default) is fully deterministic -- every prior use of
+    this function (and every number reported this session) assumed that.
+    temperature>0 samples the returned token, so repeated calls on the same
+    prompt can genuinely differ -- needed for generate_with_resampling to
+    have anything to pick between.
     """
     if slow_abstain_threshold is None:
         slow_abstain_threshold = abstain_threshold
@@ -132,8 +152,8 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         logits, _, _, _ = model(idx[:, -model.cfg.block_size :])
         neural_logits = logits[0, -1, :]
         neural_probs = F.softmax(neural_logits, dim=-1)
-        neural_conf, neural_pred = neural_probs.max(dim=-1)
-        neural_conf, neural_pred = neural_conf.item(), neural_pred.item()
+        neural_conf = neural_probs.max(dim=-1).values.item()  # abstention always uses greedy confidence
+        neural_pred = _choose(neural_probs, temperature)
 
     if neural_conf > fast_threshold:
         info = {"path": "fast", "confidence": round(neural_conf, 4)}
@@ -158,8 +178,8 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
         graph_scores[tgt] = meta["weight"] * meta["confidence"]
     combined_logits = alpha * neural_logits + beta * graph_scores
     combined_probs = F.softmax(combined_logits, dim=-1)
-    combined_conf, combined_pred = combined_probs.max(dim=-1)
-    combined_conf, combined_pred = combined_conf.item(), combined_pred.item()
+    combined_conf = combined_probs.max(dim=-1).values.item()  # abstention always uses greedy confidence
+    combined_pred = _choose(combined_probs, temperature)
 
     graph_top = max(graph_edges, key=lambda t: graph_edges[t]["weight"] * graph_edges[t]["confidence"])
     consistent = (graph_top == neural_pred) or (neural_pred in graph_edges)
@@ -221,3 +241,75 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
                 result["identifier_grounded"] = identifier_grounded(full_text, symbol_table)
 
     return result
+
+
+def _score_candidate(result: dict, domain: str) -> float:
+    """Turns the grounding signals generate_with_grounding already computes
+    into a single scalar so candidates can be ranked. Syntax validity is a
+    hard binary fact about code (either it parses or it doesn't) -- worth
+    more than any amount of self-critique confidence, so it's a decisive
+    bonus rather than an averaged-in term. An empty completion (abstained
+    immediately) is scored below every non-empty one, even a bad one: no
+    answer at all is a valid outcome elsewhere in this system, but among
+    candidates that were asked to generate, one that produced nothing loses
+    to one that tried.
+    """
+    if result["n_tokens_generated"] == 0:
+        return float("-inf")
+    score = result["self_critique_score"]
+    if domain == "code" and result.get("syntax_valid"):
+        score += 1.0
+    return score
+
+
+def generate_with_resampling(model, tok, graph, prompt: str, max_new_tokens: int, domain: str,
+                              fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
+                              symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4,
+                              n_candidates: int = 5, temperature: float = 0.8):
+    """Reject-and-resample: generate n_candidates independent completions
+    and return the one with the best self-critique (+ syntax-validity for
+    code) score, instead of reporting those signals only after the fact on
+    a single generation. Needs temperature > 0 -- at temperature=0
+    predict_next is deterministic, so every candidate would be identical
+    and there would be nothing to select between.
+
+    Threads temperature into predict_next directly rather than going
+    through generate_with_grounding (which doesn't expose it), since the
+    abstention logic itself is untouched by temperature -- only which
+    token gets returned when the model doesn't abstain.
+    """
+    candidates = []
+    for _ in range(n_candidates):
+        ids = torch.tensor([tok.encode(prompt)], dtype=torch.long)
+        prompt_len = ids.size(1)
+        generated = []
+        abstained_at = None
+        for _ in range(max_new_tokens):
+            next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
+                                          slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n,
+                                          temperature=temperature)
+            if next_id == ABSTAIN:
+                abstained_at = len(generated)
+                break
+            generated.append(next_id)
+            ids = torch.cat([ids, torch.tensor([[next_id]])], dim=1)
+
+        text = tok.decode(generated) if generated else ""
+        result = {"prompt": prompt, "generated_text": text, "n_tokens_generated": len(generated),
+                  "abstained_at_token": abstained_at}
+        if generated:
+            result["self_critique_score"] = self_critique_score(model, ids[:, :prompt_len], generated)
+            if domain == "code":
+                full_text = prompt + text
+                result["syntax_valid"] = verify_code_syntax(full_text)
+                if symbol_table is not None:
+                    result["identifier_grounded"] = identifier_grounded(full_text, symbol_table)
+        candidates.append(result)
+
+    scored = [(_score_candidate(r, domain), r) for r in candidates]
+    best_score, best_result = max(scored, key=lambda sr: sr[0])
+    best_result["n_candidates_tried"] = n_candidates
+    best_result["all_candidate_scores"] = [
+        round(s, 4) if s != float("-inf") else None for s, _ in scored
+    ]
+    return best_result

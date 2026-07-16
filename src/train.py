@@ -43,13 +43,17 @@ RUNS_DIR = ROOT / "runs"
 MODALITY_DATASETS = {"pixel", "audio"}  # code-index sequences from codec.py, not BPE text
 JOINT_WEIGHTS = {"rj": 0.25, "code": 0.25, "pixel": 0.25, "audio": 0.25}
 
-# Four sizes spanning ~50K -> ~5M params at d_model/n_layer/n_head below.
 # n_head chosen to divide d_model; exact counts printed at startup.
 SIZES = {
     "xs": dict(d_model=32, n_layer=2, n_head=2),
     "s": dict(d_model=64, n_layer=3, n_head=4),
     "m": dict(d_model=128, n_layer=4, n_head=4),
     "l": dict(d_model=256, n_layer=6, n_head=8),
+    # "Grow the layers" -- double 'l's depth (6->12). At the new 8192 vocab,
+    # pair with --embedding-rank 64 (TensorRankEmbedding) to control the
+    # embedding table's cost, which is proportionally bigger now that vocab
+    # grew 8x: 11.6M params plain vs 10.05M with rank=64 factoring.
+    "xl": dict(d_model=256, n_layer=12, n_head=8),
 }
 
 PROMPTS = {

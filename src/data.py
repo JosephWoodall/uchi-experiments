@@ -32,8 +32,15 @@ CACHE_DIR = ROOT / "data" / "cache"
 
 
 def _tokenize_corpus(tok: Tokenizer, name: str, path: Path) -> torch.Tensor:
+    """Cache filename is versioned by vocab_size -- the fixed name (name.pt)
+    used to be shared across every tokenizer version, so growing the vocab
+    (1024 -> 8192) silently overwrote the cache with new-vocab ids and broke
+    loading any older checkpoint through it. Old-vocab cache files stay on
+    disk under their own name (name_1024.pt), same fix as tokenizer.py's
+    MODEL_PREFIX versioning.
+    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{name}.pt"
+    cache_path = CACHE_DIR / f"{name}_{tok.vocab_size}.pt"
     if cache_path.exists():
         return torch.load(cache_path)
     ids = tok.encode(path.read_text())

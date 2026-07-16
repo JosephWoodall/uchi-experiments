@@ -1,8 +1,20 @@
 """Single shared tokenizer trained jointly on both corpora (text + code), so
 the same vocab can later be reused as the "text" leg of a multimodal token
-space (see tasks/core_principle.md). Small vocab keeps sequences short,
-which is what actually keeps training fast at this scale, not just param
-count.
+space (see tasks/core_principle.md).
+
+Grown from 1024 -> 8192: the small vocab turned out to be the most
+foundational, least-tested limiting factor for output quality -- rare
+identifiers/words fragment to near-character level at 1024 tokens, capping
+AST-fact precision, identifier grounding, and basic fluency all at once
+(see tasks/ducky.md's architecture writeup). Versioned by vocab size
+(spm_{vocab_size}.model/.vocab) rather than one fixed filename -- the old
+1024-vocab tokenizer stays on disk, untouched, so any earlier checkpoint
+that needs it can still find it. This is a new generation of Ducky, not a
+patch on the old one: every checkpoint trained under the 1024 vocab is
+incompatible with the new default (different vocab means different token
+ID meanings, different embedding table shape) and won't reload correctly
+against Tokenizer() going forward without explicitly requesting
+vocab_size=1024.
 """
 from pathlib import Path
 
@@ -10,24 +22,28 @@ import sentencepiece as spm
 
 ROOT = Path(__file__).resolve().parent.parent
 TOK_DIR = ROOT / "data" / "tokenizer"
-MODEL_PREFIX = TOK_DIR / "spm"
-VOCAB_SIZE = 1024
+VOCAB_SIZE = 8192
+
+
+def _model_prefix(vocab_size: int) -> Path:
+    return TOK_DIR / f"spm_{vocab_size}"
 
 
 def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
-    model_path = MODEL_PREFIX.with_suffix(".model")
+    model_prefix = _model_prefix(vocab_size)
+    model_path = model_prefix.with_suffix(".model")
     if model_path.exists():
         return model_path
 
     TOK_DIR.mkdir(parents=True, exist_ok=True)
     rj = (ROOT / "data" / "text" / "romeo_and_juliet.txt").read_text()
     code = (ROOT / "data" / "code" / "corpus.txt").read_text()
-    combined_path = TOK_DIR / "_combined.txt"
+    combined_path = TOK_DIR / f"_combined_{vocab_size}.txt"
     combined_path.write_text(rj + "\n" + code)
 
     spm.SentencePieceTrainer.train(
         input=str(combined_path),
-        model_prefix=str(MODEL_PREFIX),
+        model_prefix=str(model_prefix),
         vocab_size=vocab_size,
         model_type="bpe",
         character_coverage=1.0,

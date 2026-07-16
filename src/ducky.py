@@ -22,9 +22,9 @@ from pathlib import Path
 import torch
 
 from data import load_lm_corpus
-from graph import add_model_prediction_edges, build_ast_fact_edges, build_graph
+from graph import TokenGraph, add_model_prediction_edges, build_ast_fact_edges, build_graph
 from grounding import build_ngram_index, build_symbol_table
-from inference import calibrate_thresholds, generate_with_grounding
+from inference import calibrate_thresholds, generate_with_grounding, generate_with_resampling
 from model import GPTConfig, TinyGPT
 from tokenizer import Tokenizer
 from train import SIZES
@@ -50,7 +50,7 @@ DEFAULT_RUNS = {
 
 class Ducky:
     def __init__(self, domain: str = "code", backbone: str = "hybrid", run_name: str = None,
-                 max_new_tokens: int = 60):
+                 max_new_tokens: int = 60, use_cache: bool = True):
         if domain not in ("code", "rj"):
             raise ValueError(f"domain must be 'code' or 'rj', got {domain!r}")
         if backbone not in ("hybrid", "dense"):
@@ -60,6 +60,7 @@ class Ducky:
         self.max_new_tokens = max_new_tokens
         run_name = run_name or DEFAULT_RUNS[(domain, backbone)]
         run_dir = ROOT / "runs" / run_name
+        checkpoint_path = run_dir / "model_best.pt"
 
         self.tok = Tokenizer()
         cfg_dict = json.loads((run_dir / "config.json").read_text())
@@ -74,37 +75,84 @@ class Ducky:
             **size_cfg,
         )
         self.model = TinyGPT(cfg)
-        self.model.load_state_dict(torch.load(run_dir / "model_best.pt", map_location="cpu"))
+        self.model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
         self.model.eval()
 
-        code_source = (ROOT / "data" / "code" / "corpus.txt").read_text()
-        rj_ids = torch.load(ROOT / "data" / "cache" / "rj.pt")
-        code_ids = torch.load(ROOT / "data" / "cache" / "code.pt")
-        self.graph = build_graph(self.tok, code_source, rj_ids, code_ids)
-        domain_ids = code_ids if domain == "code" else rj_ids
-        add_model_prediction_edges(self.graph, self.model, domain_ids, confidence_threshold=0.95, n_samples=300)
+        # Graph-building (300 forward passes for model-prediction edges) and
+        # threshold calibration (500+ more) are real, repeated work -- every
+        # Ducky() instantiation redid them from scratch. Cached to disk,
+        # keyed by run_name + the checkpoint file's own mtime, so a silently
+        # retrained/overwritten checkpoint (this session hit that bug twice
+        # already, see tasks/ducky.md) invalidates the cache instead of
+        # serving stale graph/thresholds for new weights.
+        SETUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path = SETUP_CACHE_DIR / f"{run_name}.pkl"
+        checkpoint_mtime = checkpoint_path.stat().st_mtime
+        cached = None
+        if use_cache and cache_path.exists():
+            with cache_path.open("rb") as f:
+                cached = pickle.load(f)
+            if cached.get("checkpoint_mtime") != checkpoint_mtime:
+                cached = None  # checkpoint changed since this was cached -- rebuild
 
+        code_source = (ROOT / "data" / "code" / "corpus.txt").read_text()
+        rj_ids = torch.load(ROOT / "data" / "cache" / f"rj_{self.tok.vocab_size}.pt")
+        code_ids = torch.load(ROOT / "data" / "cache" / f"code_{self.tok.vocab_size}.pt")
+        domain_ids = code_ids if domain == "code" else rj_ids
         self.symbol_table = build_symbol_table(code_source) if domain == "code" else None
         self.ngram_index = build_ngram_index(domain_ids, n=4)
 
-        _, val_ids = load_lm_corpus(domain, self.tok)
-        self.fast_t, self.abstain_t, self.slow_abstain_t = calibrate_thresholds(
-            self.model, self.graph, val_ids, cfg_dict["block_size"]
-        )
+        if cached is not None:
+            self.graph = TokenGraph()
+            self.graph.edges = cached["graph_edges"]
+            self.fast_t, self.abstain_t, self.slow_abstain_t = cached["thresholds"]
+        else:
+            self.graph = build_graph(self.tok, code_source, rj_ids, code_ids)
+            add_model_prediction_edges(self.graph, self.model, domain_ids, confidence_threshold=0.95, n_samples=300)
 
-    def ask(self, prompt: str, max_new_tokens: int = None) -> str:
+            _, val_ids = load_lm_corpus(domain, self.tok)
+            self.fast_t, self.abstain_t, self.slow_abstain_t = calibrate_thresholds(
+                self.model, self.graph, val_ids, cfg_dict["block_size"]
+            )
+            if use_cache:
+                with cache_path.open("wb") as f:
+                    pickle.dump({
+                        "checkpoint_mtime": checkpoint_mtime,
+                        "graph_edges": self.graph.edges,
+                        "thresholds": (self.fast_t, self.abstain_t, self.slow_abstain_t),
+                    }, f)
+
+    def ask(self, prompt: str, max_new_tokens: int = None, n_candidates: int = 1,
+            temperature: float = 0.8) -> str:
         """Always returns a string -- an empty one on immediate abstention,
         never an exception. Also returns the grounding metadata (syntax
         validity, self-critique, identifier grounding) as a side channel
         via self.last_result, for callers who want more than just the text.
+
+        n_candidates=1 (default) is the original single deterministic-path
+        behavior, unchanged. n_candidates>1 switches to reject-and-resample:
+        generate that many independent candidates (temperature>0, so they
+        can actually differ) and keep the one with the best self-critique
+        (+ syntax-validity bonus for code) score, rather than only reporting
+        those signals after the fact on a single generation.
         """
-        result = generate_with_grounding(
-            self.model, self.tok, self.graph, prompt,
-            max_new_tokens or self.max_new_tokens, domain=self.domain,
-            fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
-            slow_abstain_threshold=self.slow_abstain_t,
-            symbol_table=self.symbol_table, ngram_index=self.ngram_index,
-        )
+        if n_candidates > 1:
+            result = generate_with_resampling(
+                self.model, self.tok, self.graph, prompt,
+                max_new_tokens or self.max_new_tokens, domain=self.domain,
+                fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
+                slow_abstain_threshold=self.slow_abstain_t,
+                symbol_table=self.symbol_table, ngram_index=self.ngram_index,
+                n_candidates=n_candidates, temperature=temperature,
+            )
+        else:
+            result = generate_with_grounding(
+                self.model, self.tok, self.graph, prompt,
+                max_new_tokens or self.max_new_tokens, domain=self.domain,
+                fast_threshold=self.fast_t, abstain_threshold=self.abstain_t,
+                slow_abstain_threshold=self.slow_abstain_t,
+                symbol_table=self.symbol_table, ngram_index=self.ngram_index,
+            )
         self.last_result = result
         return result["generated_text"] if result["n_tokens_generated"] > 0 else ""
 
