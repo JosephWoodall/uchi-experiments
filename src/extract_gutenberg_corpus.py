@@ -1,86 +1,42 @@
 """Curated bulk text corpus from Project Gutenberg -- approved relaxation
-of "hand-picked, not scraped" to "curated bulk, still license-clean": a
-fixed, reviewed list of well-known public-domain titles (not "download
-everything"), spanning fiction, philosophy, history, and science for
-breadth beyond Shakespeare alone. Every text is genuinely public domain in
-the US (Gutenberg's own basis for hosting them).
+of "hand-picked, not scraped" to "curated bulk, still license-clean": every
+text is genuinely public domain in the US (Gutenberg's own basis for
+hosting them). Selection is now driven by Gutenberg's own public catalog
+(pg_catalog.csv, fetched from gutenberg.org) rather than hand-listing IDs
+from memory -- reliable at the scale needed to meaningfully close the
+Chinchilla data gap (a few hundred books, not a few dozen), and avoids
+guessing whether any specific ID is even valid.
+
+BOOK_IDS below is the original hand-picked seed list (kept for continuity
+with the first pass); EXTRA_COUNT more are drawn from the catalog itself,
+filtered to English-language "Text" entries, deterministically sampled
+(fixed seed) so re-running this script is reproducible rather than a
+moving target.
 
 Strips Gutenberg's standard boilerplate header/footer (license text, not
 the actual work) via its own stable, well-documented start/end markers.
 Skips (logs, does not silently ignore) any ID that fails to fetch or
-doesn't contain the expected markers, rather than assuming every ID in
-the curated list is still valid.
+doesn't contain the expected markers.
 """
+import csv
+import random
 import re
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Curated: well-known, high-confidence public-domain titles, spanning
-# multiple subjects for breadth (not just novels) -- reviewed list, not a
-# scrape of Gutenberg's full catalog.
+CATALOG_URL = "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv"
+EXTRA_COUNT = 900  # sampled from the catalog, on top of the seed list below
+SEED = 7
+
+# Original hand-picked seed list, kept for continuity with the first pass.
 BOOK_IDS = [
-    11,     # Alice's Adventures in Wonderland
-    84,     # Frankenstein
-    1342,   # Pride and Prejudice
-    76,     # Adventures of Huckleberry Finn
-    74,     # The Adventures of Tom Sawyer
-    2701,   # Moby Dick
-    1661,   # The Adventures of Sherlock Holmes
-    244,    # A Study in Scarlet
-    98,     # A Tale of Two Cities
-    1400,   # Great Expectations
-    46,     # A Christmas Carol
-    730,    # Oliver Twist
-    174,    # The Picture of Dorian Gray
-    345,    # Dracula
-    768,    # Wuthering Heights
-    1260,   # Jane Eyre
-    43,     # The Strange Case of Dr Jekyll and Mr Hyde
-    35,     # The Time Machine
-    36,     # The War of the Worlds
-    164,    # Twenty Thousand Leagues Under the Sea
-    103,    # Around the World in Eighty Days
-    2554,   # Crime and Punishment
-    2600,   # War and Peace
-    28054,  # The Brothers Karamazov
-    5200,   # Metamorphosis
-    996,    # Don Quixote
-    135,    # Les Miserables
-    1184,   # The Count of Monte Cristo
-    1497,   # The Republic (Plato)
-    1998,   # Thus Spoke Zarathustra
-    4363,   # Beyond Good and Evil
-    2680,   # Meditations (Marcus Aurelius)
-    132,    # The Art of War
-    1232,   # The Prince (Machiavelli)
-    3300,   # The Wealth of Nations
-    61,     # The Communist Manifesto
-    147,    # Common Sense
-    205,    # Walden
-    1228,   # On the Origin of Species
-    2009,   # Relativity: The Special and General Theory (Einstein)
-    1946,   # The Interpretation of Dreams (Freud, translated)
-    28233,  # Autobiography of Benjamin Franklin (alt ID kept as fallback)
-    148,    # A Tale of Two Cities (dup guard tolerated -- dedup by id below anyway)
-    16328,  # Beowulf
-    2383,   # The Canterbury Tales
-    26,     # Paradise Lost
-    1322,   # Leaves of Grass
-    8800,   # The Divine Comedy
-    1524,   # Hamlet
-    1533,   # Macbeth
-    23042,  # Othello
-    27761,  # The Adventures of Sherlock Holmes (alt, dedup guard)
-    120,    # Treasure Island
-    514,    # Little Women
-    16,     # Peter Pan
-    55,     # The Wonderful Wizard of Oz
-    2591,   # Grimms' Fairy Tales
-    21,     # Aesop's Fables
-    6130,   # The Iliad
-    1727,   # The Odyssey
+    11, 84, 1342, 76, 74, 2701, 1661, 244, 98, 1400, 46, 730, 174, 345, 768,
+    1260, 43, 35, 36, 164, 103, 2554, 2600, 28054, 5200, 996, 135, 1184,
+    1497, 1998, 4363, 2680, 132, 1232, 3300, 61, 147, 205, 1228, 2009, 1946,
+    28233, 148, 16328, 2383, 26, 1322, 8800, 1524, 1533, 23042, 27761, 120,
+    514, 16, 55, 2591, 21, 6130, 1727,
 ]
 
 HEADER_RE = re.compile(r"\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK.*?\*\*\*", re.IGNORECASE | re.DOTALL)
@@ -89,52 +45,89 @@ FOOTER_RE = re.compile(r"\*\*\* END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK.*", 
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "text"
 
 
-def fetch(book_id: int) -> str | None:
+def fetch_catalog_ids(extra_count: int, seed: int, exclude: set) -> list:
+    """Real catalog IDs, not guessed -- filtered to English-language "Text"
+    entries (excludes audio recordings, non-English works), deterministically
+    sampled so this script is reproducible.
+    """
+    catalog_path = OUT_DIR / "_pg_catalog_cache.csv"
+    if not catalog_path.exists():
+        with urllib.request.urlopen(CATALOG_URL, timeout=60) as resp:
+            catalog_path.write_bytes(resp.read())
+
+    candidates = []
+    with catalog_path.open(encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("Language") != "en" or row.get("Type") != "Text":
+                continue
+            try:
+                book_id = int(row["Text#"])
+            except (KeyError, ValueError):
+                continue
+            if book_id in exclude:
+                continue
+            candidates.append(book_id)
+
+    rng = random.Random(seed)
+    rng.shuffle(candidates)
+    return candidates[:extra_count]
+
+
+def fetch(book_id: int, retries: int = 2) -> str | None:
     url = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            return resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-        print(f"  id={book_id}: fetch failed ({e})")
-        return None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+                ConnectionError, OSError) as e:
+            # A shared public server serving ~1000 sequential requests will
+            # have occasional transient drops (RemoteDisconnected, resets,
+            # etc.) -- one bad connection must not kill a 900-book run.
+            if attempt < retries:
+                time.sleep(1.0)
+                continue
+            print(f"  id={book_id}: fetch failed after {retries + 1} attempts ({e})")
+            return None
 
 
 def clean(raw_text: str) -> str | None:
     header_match = HEADER_RE.search(raw_text)
     footer_match = FOOTER_RE.search(raw_text)
     if not header_match or not footer_match:
-        return None  # doesn't match expected Gutenberg boilerplate shape -- skip, don't guess
+        return None
     body = raw_text[header_match.end(): footer_match.start()]
     return body.strip()
 
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    seen_ids = []
+    all_ids = list(dict.fromkeys(BOOK_IDS))  # dedupe, preserve order
+    extra_ids = fetch_catalog_ids(EXTRA_COUNT, SEED, exclude=set(all_ids))
+    all_ids.extend(extra_ids)
+    print(f"seed list: {len(BOOK_IDS)} ids, catalog-sampled: {len(extra_ids)} ids, total attempted: {len(all_ids)}")
+
     chunks = []
     n_failed = 0
-
-    for book_id in BOOK_IDS:
-        if book_id in seen_ids:
-            continue
-        seen_ids.append(book_id)
+    for i, book_id in enumerate(all_ids):
         raw = fetch(book_id)
         if raw is None:
             n_failed += 1
             continue
         body = clean(raw)
         if body is None or len(body) < 1000:
-            print(f"  id={book_id}: boilerplate markers not found or body too short -- skipped")
             n_failed += 1
             continue
         chunks.append(f"# --- gutenberg id={book_id} ---\n{body}")
-        print(f"  id={book_id}: {len(body):,} chars")
-        time.sleep(0.5)  # polite delay between requests to a shared public server
+        if (i + 1) % 50 == 0:
+            print(f"  progress: {i + 1}/{len(all_ids)} attempted, {len(chunks)} succeeded so far")
+        time.sleep(0.3)  # polite delay to a shared public server
 
     combined = "\n\n".join(chunks)
     (OUT_DIR / "gutenberg_corpus.txt").write_text(combined)
     print(f"\ngutenberg_corpus.txt: {len(combined):,} chars from {len(chunks)} texts "
-          f"({n_failed} failed/skipped out of {len(seen_ids)} attempted)")
+          f"({n_failed} failed/skipped out of {len(all_ids)} attempted)")
 
 
 if __name__ == "__main__":
