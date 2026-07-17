@@ -17,8 +17,23 @@ subdirectory) is excluded, since its own license may differ from the
 parent package's and wasn't independently checked.
 
 Produces:
-  data/code/corpus.txt   - concatenated raw source, for `base`/`mtp` arms
-  data/code/pairs.jsonl  - {doc, code} pairs per function, for `jepa-aux`
+  data/code/corpus.txt        - everything concatenated (call-graph/AST
+                                 tooling reads this single file)
+  data/code/corpus_core.txt   - stdlib only: simple, idiomatic utility-style
+                                 code, the style actually tested by
+                                 bench_ducky.py's held-out tasks
+  data/code/corpus_breadth.txt - site-packages libraries only: real code,
+                                 but dominated by large ML/scientific
+                                 library internals, a different style
+  data/code/pairs.jsonl       - {doc, code} pairs per function, for `jepa-aux`
+
+Split into core/breadth because they're wildly imbalanced by raw size
+(core ~11MB, breadth ~150MB) -- uniform sampling over the concatenated
+corpus would make core's simple-utility style a rounding error during
+training. get_weighted_code_batch (data.py) samples from these as two
+separate weighted pools instead, the same pattern get_joint_batch already
+uses to keep small pixel/audio pools from being drowned out by much larger
+text/code ones.
 """
 import ast
 import json
@@ -64,47 +79,61 @@ def site_pkg_eligible(path: Path, pkg_root: Path) -> bool:
     return not any(part in SITE_PACKAGES_DENYLIST_DIRS for part in path.relative_to(pkg_root).parts)
 
 
-files_with_roots = [(p, stdlib) for p in sorted(stdlib.rglob("*.py")) if stdlib_eligible(p)]
-
+core_files = [(p, stdlib) for p in sorted(stdlib.rglob("*.py")) if stdlib_eligible(p)]
+breadth_files = []
 for pkg_name in ALLOWED_THIRD_PARTY_PACKAGES:
     pkg_root = purelib / pkg_name
     if not pkg_root.is_dir():
         print(f"  (skipping {pkg_name}: not found at {pkg_root})")
         continue
-    files_with_roots.extend(
+    breadth_files.extend(
         (p, purelib) for p in sorted(pkg_root.rglob("*.py")) if site_pkg_eligible(p, purelib)
     )
 
-raw_chunks = []
 pairs = []
 n_parse_failed = 0
 
-for src_path, root in files_with_roots:
-    name = str(src_path.relative_to(root))
-    try:
-        source = src_path.read_text()
-        tree = ast.parse(source, filename=name)
-    except (SyntaxError, UnicodeDecodeError, ValueError):
-        n_parse_failed += 1
-        continue
 
-    raw_chunks.append(f"# --- {name} ---\n{source}")
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+def extract(files_with_roots: list) -> list:
+    global n_parse_failed
+    chunks = []
+    for src_path, root in files_with_roots:
+        name = str(src_path.relative_to(root))
+        try:
+            source = src_path.read_text()
+            tree = ast.parse(source, filename=name)
+        except (SyntaxError, UnicodeDecodeError, ValueError):
+            n_parse_failed += 1
             continue
-        doc = ast.get_docstring(node)
-        if not doc or len(doc) < MIN_DOC_CHARS:
-            continue
-        code = ast.get_source_segment(source, node)
-        if not code:
-            continue
-        pairs.append({"doc": doc.strip(), "code": code, "module": name, "name": node.name})
 
-(out_dir / "corpus.txt").write_text("\n\n".join(raw_chunks))
+        chunks.append(f"# --- {name} ---\n{source}")
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            doc = ast.get_docstring(node)
+            if not doc or len(doc) < MIN_DOC_CHARS:
+                continue
+            code = ast.get_source_segment(source, node)
+            if not code:
+                continue
+            pairs.append({"doc": doc.strip(), "code": code, "module": name, "name": node.name})
+    return chunks
+
+
+core_chunks = extract(core_files)
+breadth_chunks = extract(breadth_files)
+
+(out_dir / "corpus_core.txt").write_text("\n\n".join(core_chunks))
+(out_dir / "corpus_breadth.txt").write_text("\n\n".join(breadth_chunks))
+(out_dir / "corpus.txt").write_text("\n\n".join(core_chunks + breadth_chunks))
 with (out_dir / "pairs.jsonl").open("w") as f:
     for p in pairs:
         f.write(json.dumps(p) + "\n")
 
-print(f"corpus.txt: {sum(len(c) for c in raw_chunks):,} chars from {len(raw_chunks)} modules "
+core_chars = sum(len(c) for c in core_chunks)
+breadth_chars = sum(len(c) for c in breadth_chunks)
+print(f"corpus_core.txt (stdlib): {core_chars:,} chars from {len(core_chunks)} modules")
+print(f"corpus_breadth.txt (site-packages): {breadth_chars:,} chars from {len(breadth_chunks)} modules")
+print(f"corpus.txt (combined): {core_chars + breadth_chars:,} chars "
       f"({n_parse_failed} skipped -- failed to parse)")
 print(f"pairs.jsonl: {len(pairs)} (doc, code) pairs")

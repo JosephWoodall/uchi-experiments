@@ -29,10 +29,12 @@ from data import (
     UNIFIED_VOCAB_SIZE,
     get_joint_batch,
     get_lm_batch,
+    get_weighted_code_batch,
     load_code_pairs,
     load_joint_modalities,
     load_lm_corpus,
     load_modality_corpus,
+    load_weighted_code_corpus,
 )
 from model import GPTConfig, TinyGPT
 from tokenizer import Tokenizer
@@ -227,18 +229,42 @@ def run(args):
             return result
 
     else:
+        use_weighted_code = args.dataset == "code" and args.code_core_weight is not None
         if is_modality:
             train_ids, val_ids = load_modality_corpus(args.dataset)
+        elif use_weighted_code:
+            # Stdlib ('core', ~11MB, simple utility-style) vs site-packages
+            # ('breadth', ~150MB, dominated by ML/scientific library
+            # internals) -- uniform sampling over the concatenated corpus
+            # would make core a ~6.6%-by-volume rounding error. Weighted
+            # per-example pool choice instead, same pattern as
+            # get_joint_batch already uses for pixel/audio.
+            pools = load_weighted_code_corpus(tok)
+            code_weights = {"core": args.code_core_weight, "breadth": 1 - args.code_core_weight}
+            train_pools = {k: v[0] for k, v in pools.items()}
+            val_pools = {k: v[1] for k, v in pools.items()}
         else:
             train_ids, val_ids = load_lm_corpus(args.dataset, tok)
 
         def train_step():
+            if use_weighted_code:
+                x, targets = get_weighted_code_batch(train_pools, code_weights, args.batch_size,
+                                                      args.block_size, n_future)
+                loss = compute_lm_loss(compute_model, x, targets, pad_id)
+                return loss, {"loss": loss.item()}
             return lm_batch_loss(train_ids, args.batch_size)
 
         @torch.no_grad()
         def eval_step(n_batches=5):
             model.eval()
-            losses = [lm_batch_loss(val_ids, args.batch_size)[1]["loss"] for _ in range(n_batches)]
+            if use_weighted_code:
+                losses = []
+                for _ in range(n_batches):
+                    x, targets = get_weighted_code_batch(val_pools, code_weights, args.batch_size,
+                                                          args.block_size, n_future)
+                    losses.append(compute_lm_loss(compute_model, x, targets, pad_id).item())
+            else:
+                losses = [lm_batch_loss(val_ids, args.batch_size)[1]["loss"] for _ in range(n_batches)]
             model.train()
             return {"val_loss": sum(losses) / len(losses)}
 
@@ -385,6 +411,12 @@ if __name__ == "__main__":
     p.add_argument("--attention-layers", type=int, nargs="*", default=[], help="0-indexed layers using attention when --rwkv-hybrid; rest use RWKV")
     p.add_argument("--use-bitlinear", action="store_true", help="BitLinear throughout Ducky's own blocks (attention/RWKV + dense MLP)")
     p.add_argument("--embedding-rank", type=int, default=0, help="0 = plain tied embedding; >0 = TensorRankEmbedding at this rank")
+    p.add_argument("--code-core-weight", type=float, default=0.5,
+                    help="--dataset code only: sampling weight for stdlib ('core') vs site-packages "
+                    "('breadth') per training example, default 0.5/0.5 despite core being ~14x smaller "
+                    "by raw size -- without this, core's simple-utility style becomes a rounding error "
+                    "during training. Set to None (via code, not CLI) to disable and use plain uniform "
+                    "sampling over the concatenated corpus instead.")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--num-threads", type=int, default=8, help="torch.set_num_threads() -- measured optimal on this "
                     "machine (20 logical cores); the default 10 is close but 8 was faster, and 16-20 was 4-6x slower "

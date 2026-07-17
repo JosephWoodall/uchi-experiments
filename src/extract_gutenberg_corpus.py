@@ -27,8 +27,15 @@ import urllib.request
 from pathlib import Path
 
 CATALOG_URL = "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv"
-EXTRA_COUNT = 900  # sampled from the catalog, on top of the seed list below
+EXTRA_COUNT = 0  # already fetched 900 general books in the prior pass; bump this again for a further general expansion
 SEED = 7
+
+# Drama/plays specifically -- unlike general prose, plays are literally
+# formatted as back-and-forth dialogue between named characters, the one
+# real conversational-STRUCTURE signal available in Gutenberg's catalog
+# (filtered by its own Subjects/Bookshelves metadata, not guessed titles).
+DRAMA_COUNT = 300
+DRAMA_SEED = 13
 
 # Original hand-picked seed list, kept for continuity with the first pass.
 BOOK_IDS = [
@@ -74,6 +81,47 @@ def fetch_catalog_ids(extra_count: int, seed: int, exclude: set) -> list:
     return candidates[:extra_count]
 
 
+def fetch_drama_catalog_ids(count: int, seed: int, exclude: set) -> list:
+    """Real catalog IDs tagged as drama/plays in Gutenberg's own Subjects/
+    Bookshelves metadata -- plays are actually formatted as dialogue
+    (character: line, character: line), the one reliable conversational-
+    structure signal available without guessing which specific titles are
+    dialogue-heavy.
+    """
+    catalog_path = OUT_DIR / "_pg_catalog_cache.csv"
+    candidates = []
+    with catalog_path.open(encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("Language") != "en" or row.get("Type") != "Text":
+                continue
+            subjects = (row.get("Subjects") or "").lower()
+            bookshelves = (row.get("Bookshelves") or "").lower()
+            if "drama" not in subjects and "plays" not in subjects and "drama" not in bookshelves:
+                continue
+            try:
+                book_id = int(row["Text#"])
+            except (KeyError, ValueError):
+                continue
+            if book_id in exclude:
+                continue
+            candidates.append(book_id)
+
+    rng = random.Random(seed)
+    rng.shuffle(candidates)
+    return candidates[:count]
+
+
+def already_fetched_ids(corpus_path: Path) -> set:
+    """IDs already present in an existing gutenberg_corpus.txt, parsed from
+    its own '# --- gutenberg id=N ... ---' markers -- lets a follow-up run
+    add new texts without re-fetching what's already there.
+    """
+    if not corpus_path.exists():
+        return set()
+    return {int(m) for m in re.findall(r"# --- gutenberg id=(\d+)", corpus_path.read_text())}
+
+
 def fetch(book_id: int, retries: int = 2) -> str | None:
     url = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
     for attempt in range(retries + 1):
@@ -101,16 +149,10 @@ def clean(raw_text: str) -> str | None:
     return body.strip()
 
 
-def main():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    all_ids = list(dict.fromkeys(BOOK_IDS))  # dedupe, preserve order
-    extra_ids = fetch_catalog_ids(EXTRA_COUNT, SEED, exclude=set(all_ids))
-    all_ids.extend(extra_ids)
-    print(f"seed list: {len(BOOK_IDS)} ids, catalog-sampled: {len(extra_ids)} ids, total attempted: {len(all_ids)}")
-
+def _fetch_batch(ids: list, tag: str) -> tuple:
     chunks = []
     n_failed = 0
-    for i, book_id in enumerate(all_ids):
+    for i, book_id in enumerate(ids):
         raw = fetch(book_id)
         if raw is None:
             n_failed += 1
@@ -119,15 +161,39 @@ def main():
         if body is None or len(body) < 1000:
             n_failed += 1
             continue
-        chunks.append(f"# --- gutenberg id={book_id} ---\n{body}")
+        chunks.append(f"# --- gutenberg id={book_id} type={tag} ---\n{body}")
         if (i + 1) % 50 == 0:
-            print(f"  progress: {i + 1}/{len(all_ids)} attempted, {len(chunks)} succeeded so far")
+            print(f"  [{tag}] progress: {i + 1}/{len(ids)} attempted, {len(chunks)} succeeded so far")
         time.sleep(0.3)  # polite delay to a shared public server
+    return chunks, n_failed
 
-    combined = "\n\n".join(chunks)
-    (OUT_DIR / "gutenberg_corpus.txt").write_text(combined)
-    print(f"\ngutenberg_corpus.txt: {len(combined):,} chars from {len(chunks)} texts "
-          f"({n_failed} failed/skipped out of {len(all_ids)} attempted)")
+
+def main():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    corpus_path = OUT_DIR / "gutenberg_corpus.txt"
+    existing_text = corpus_path.read_text() if corpus_path.exists() else ""
+    existing_ids = already_fetched_ids(corpus_path)
+    print(f"already present: {len(existing_ids)} texts (kept, not re-fetched)")
+
+    all_ids = list(dict.fromkeys(BOOK_IDS))
+    extra_ids = fetch_catalog_ids(EXTRA_COUNT, SEED, exclude=set(all_ids) | existing_ids)
+    general_ids = [i for i in (all_ids + extra_ids) if i not in existing_ids]
+
+    drama_ids = fetch_drama_catalog_ids(DRAMA_COUNT, DRAMA_SEED, exclude=existing_ids | set(general_ids))
+    print(f"new general: {len(general_ids)} ids, new drama/dialogue: {len(drama_ids)} ids")
+
+    general_chunks, n_failed_general = _fetch_batch(general_ids, tag="general") if general_ids else ([], 0)
+    drama_chunks, n_failed_drama = _fetch_batch(drama_ids, tag="drama")
+
+    new_combined = "\n\n".join(general_chunks + drama_chunks)
+    combined = (existing_text + "\n\n" + new_combined) if existing_text else new_combined
+    corpus_path.write_text(combined)
+    n_failed = n_failed_general + n_failed_drama
+    n_attempted = len(general_ids) + len(drama_ids)
+    print(f"\ngutenberg_corpus.txt: {len(combined):,} chars total "
+          f"({len(existing_ids)} kept + {len(general_chunks) + len(drama_chunks)} new = "
+          f"{len(existing_ids) + len(general_chunks) + len(drama_chunks)} texts, "
+          f"{n_failed} failed/skipped out of {n_attempted} newly attempted)")
 
 
 if __name__ == "__main__":

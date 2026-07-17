@@ -7,12 +7,15 @@ __pycache__/
 data/cache/
 
 # Regenerable corpus builds -- rebuilt by extract_code_corpus.py (from the
-# local stdlib + curated site-packages libraries) and
-# extract_gutenberg_corpus.py (from Project Gutenberg) respectively. Not
-# source of truth, and both now exceed or approach GitHub's 100MB limit as
-# the corpora have grown -- the extraction scripts are the source of truth,
-# these are their output.
+# local stdlib + curated site-packages libraries), extract_gutenberg_corpus.py
+# (from Project Gutenberg), and extract_chat_corpus.py (from NLTK's
+# nps_chat) respectively. Not source of truth, and several now exceed or
+# approach GitHub's 100MB limit as the corpora have grown -- the extraction
+# scripts are the source of truth, these are their output.
 data/code/corpus.txt
+data/code/corpus_core.txt
+data/code/corpus_breadth.txt
 data/code/pairs.jsonl
 data/text/gutenberg_corpus.txt
 data/text/_pg_catalog_cache.csv
+data/text/chat_corpus.txt

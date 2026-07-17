@@ -59,14 +59,64 @@ def load_lm_corpus(name: str, tok: Tokenizer, val_frac: float = 0.1):
     """
     rj_path = ROOT / "data" / "text" / "romeo_and_juliet.txt"
     gutenberg_path = ROOT / "data" / "text" / "gutenberg_corpus.txt"
+    chat_path = ROOT / "data" / "text" / "chat_corpus.txt"
+
+    def _load_text_domain() -> str:
+        parts = [rj_path.read_text()]
+        if gutenberg_path.exists():
+            parts.append(gutenberg_path.read_text())
+        if chat_path.exists():
+            parts.append(chat_path.read_text())
+        return "\n".join(parts)
+
     text_sources = {
         "rj": lambda: rj_path.read_text(),
-        "text": lambda: rj_path.read_text() + "\n" + (gutenberg_path.read_text() if gutenberg_path.exists() else ""),
+        "text": _load_text_domain,
         "code": lambda: (ROOT / "data" / "code" / "corpus.txt").read_text(),
     }
     ids = _tokenize_corpus(tok, name, text_sources[name]())
     n_val = int(len(ids) * val_frac)
     return ids[:-n_val], ids[-n_val:]
+
+
+def load_weighted_code_corpus(tok: Tokenizer, val_frac: float = 0.1):
+    """Stdlib ('core') and site-packages libraries ('breadth') as two
+    separate tensors, not one concatenated corpus -- core is ~11MB of
+    simple, idiomatic utility-style code (the style bench_ducky.py's
+    held-out tasks actually test); breadth is ~150MB of real code, but
+    dominated by large ML/scientific library internals, a different
+    style. Uniform sampling over the concatenated corpus.txt would make
+    core a rounding error (~6.6% by volume) during training. Returns
+    {"core": (train, val), "breadth": (train, val)} for get_weighted_code_batch.
+    """
+    core_path = ROOT / "data" / "code" / "corpus_core.txt"
+    breadth_path = ROOT / "data" / "code" / "corpus_breadth.txt"
+    core_ids = _tokenize_corpus(tok, "code_core", core_path.read_text())
+    breadth_ids = _tokenize_corpus(tok, "code_breadth", breadth_path.read_text())
+    n_val_core = int(len(core_ids) * val_frac)
+    n_val_breadth = int(len(breadth_ids) * val_frac)
+    return {
+        "core": (core_ids[:-n_val_core], core_ids[-n_val_core:]),
+        "breadth": (breadth_ids[:-n_val_breadth], breadth_ids[-n_val_breadth:]),
+    }
+
+
+def get_weighted_code_batch(ids_by_pool: dict, weights: dict, batch_size: int, block_size: int, n_future: int = 1):
+    """Same weighted-per-example-pool-choice pattern as get_joint_batch,
+    applied within a single domain's vocabulary (no marker tokens needed --
+    core/breadth share the same token space, unlike the cross-modality
+    case). Returns x: (B, block_size), targets: (B, block_size, n_future).
+    """
+    names = list(ids_by_pool.keys())
+    w = torch.tensor([weights[n] for n in names], dtype=torch.float)
+    choice_idx = torch.multinomial(w, batch_size, replacement=True)
+    xs, ys = [], []
+    for c in choice_idx.tolist():
+        ids = ids_by_pool[names[c]]
+        start = torch.randint(0, len(ids) - block_size - n_future, (1,)).item()
+        xs.append(ids[start : start + block_size])
+        ys.append(torch.stack([ids[start + k + 1 : start + block_size + k + 1] for k in range(n_future)], dim=-1))
+    return torch.stack(xs), torch.stack(ys)
 
 
 def load_joint_modalities(tok: Tokenizer, val_frac: float = 0.1):
