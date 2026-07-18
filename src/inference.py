@@ -128,6 +128,38 @@ def _choose(probs: torch.Tensor, temperature: float) -> int:
     return torch.multinomial(tempered, num_samples=1).item()
 
 
+def _block_repeat_ngrams(logits: torch.Tensor, context: list, n: int) -> torch.Tensor:
+    """No-repeat-ngram blocking (standard decoding technique, e.g.
+    HuggingFace's no_repeat_ngram_size): masks out (logit=-inf) any
+    candidate token that would recreate an n-gram already generated
+    earlier in this same context. This is the actual fix for the
+    self-reinforcing repetition loop (Holtzman et al. 2019,
+    arXiv:1904.09751): measured directly on this checkpoint, confidence in
+    repeating a phrase climbs every cycle (0.54 -> 0.82 -> 0.88 -> 0.90 at
+    matched positions across cycles), converging toward ~0.97 -- nothing
+    based on confidence alone can break out of that once it starts, since
+    confidence is *increasing*, not decreasing. Only directly forbidding
+    the repeat works. Applied before confidence/fast-path is computed, not
+    after, so the rest of the abstention machinery naturally reconsiders
+    whatever's left once the repeat is removed, rather than needing a
+    separate override path.
+    """
+    if len(context) < n - 1:
+        return logits
+    seen_ngrams: dict = {}
+    for i in range(len(context) - n + 1):
+        prefix = tuple(context[i:i + n - 1])
+        seen_ngrams.setdefault(prefix, set()).add(context[i + n - 1])
+    current_prefix = tuple(context[-(n - 1):])
+    blocked = seen_ngrams.get(current_prefix)
+    if not blocked:
+        return logits
+    logits = logits.clone()
+    for tok in blocked:
+        logits[tok] = float("-inf")
+    return logits
+
+
 def _apply_session_memory(session_memory: SessionTrie, context: list, chosen_token: int, info: dict) -> None:
     """session_memory is the working-memory trie (session_memory.py) -- a
     third grounding signal, distinct from the graph and from n-gram
@@ -152,7 +184,7 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
                   abstain_threshold: float = DEFAULT_ABSTAIN_THRESHOLD,
                   slow_abstain_threshold: float = None, alpha: float = 0.6, beta: float = 0.4,
                   ngram_index: set = None, ngram_n: int = 4, temperature: float = 0.0,
-                  session_memory: SessionTrie = None):
+                  session_memory: SessionTrie = None, no_repeat_ngram_size: int = 4):
     """Returns (token_id or ABSTAIN, info_dict) for the next token after idx.
     All three thresholds should come from calibrate_thresholds() for this
     specific (model, graph) pair, not the module defaults. slow_abstain_threshold
@@ -179,6 +211,12 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     temperature>0 samples the returned token, so repeated calls on the same
     prompt can genuinely differ -- needed for generate_with_resampling to
     have anything to pick between.
+
+    no_repeat_ngram_size (default 4): blocks any candidate that would
+    recreate an n-gram already generated in this context -- see
+    _block_repeat_ngrams. Applied to the raw logits before confidence is
+    computed, so abstention/fast-path decisions naturally operate on
+    whatever's left once repeats are removed. Set to 0 to disable.
     """
     if slow_abstain_threshold is None:
         slow_abstain_threshold = abstain_threshold
@@ -186,6 +224,8 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
     with torch.no_grad():
         logits, _, _, _ = model(idx[:, -model.cfg.block_size :])
         neural_logits = logits[0, -1, :]
+        if no_repeat_ngram_size > 0:
+            neural_logits = _block_repeat_ngrams(neural_logits, idx[0].tolist(), no_repeat_ngram_size)
         neural_probs = F.softmax(neural_logits, dim=-1)
         neural_conf = neural_probs.max(dim=-1).values.item()  # abstention always uses greedy confidence
         neural_pred = _choose(neural_probs, temperature)

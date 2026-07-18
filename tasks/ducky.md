@@ -553,6 +553,45 @@ verified progress on the diagnosed question (why generation cut short);
 a distinct, newly-visible problem (why longer generation degenerates)
 is the next one to solve, not yet attempted.
 
+**Repetition loop: root cause found, fixed, and honestly resolved --
+doesn't move the benchmark, and that itself is the real finding.**
+Instrumented raw greedy generation step-by-step on the is_prime prompt: the
+model's confidence in repeating an already-generated span climbs
+*monotonically* with every cycle (measured at matched positions: 0.54 ->
+0.82 -> 0.88 -> 0.90 for "if"->"n"; 0.16 -> 0.81 -> 0.89 -> 0.92 for
+"integer"->")"), converging toward ~0.97 -- the exact self-reinforcing
+mechanism Holtzman et al. 2019 (arXiv:1904.09751) describes for greedy/
+deterministic decoding. By the 2nd-3rd cycle, confidence exceeds the
+fast-path threshold, meaning the model bypasses grounding entirely --
+nothing confidence-based can break out once it starts, since confidence
+*increases* each cycle rather than decreasing.
+
+Fixed with the standard technique (HuggingFace's `no_repeat_ngram_size`,
+widely used in production decoding): `_block_repeat_ngrams` in
+inference.py masks out (logit=-inf) any candidate that would recreate an
+n-gram (default n=4) already generated in this context, applied before
+confidence is computed so the rest of the abstention machinery naturally
+reconsiders whatever's left. Verified directly: the exact verbatim loop
+("if n == 0: raise ValueError('n must be a integer')" repeated 8+ times)
+is gone, replaced by forced divergence ("if n == 1: raise ValueError('i
+must be a" -- a genuinely different, if imperfect, continuation).
+
+**Reran the full benchmark with the fix active: still 0/10, and this is
+the complete, honest answer, not a loose end.** Without the easy
+repeat-based continuation available, completions got *shorter* again
+(back to fragments like "value += 1", "count_v", "self._") -- the
+model's genuine confidence on truly novel content was never actually
+high; the repetition loop was masking that low confidence behind a
+decoding artifact that looked confident. Removing the artifact doesn't
+unlock capability that wasn't there -- it just stops hiding its absence
+behind a repeat loop. Concise, honest abstention is a strictly better
+failure mode than a 50-word verbatim loop even though neither passes the
+benchmark, so the fix is kept regardless. This closes the loop on both
+"why does generation cut short" (a real, fixed calibration bug) and "why
+does longer generation degenerate" (a real, fixed decoding artifact) --
+both diagnosed to their actual root cause, both fixed, neither was ever
+the true bottleneck. That remains base-model scale.
+
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
 being cheap and checkable against something real (parse validity, a real
