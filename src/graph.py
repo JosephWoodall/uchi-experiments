@@ -111,16 +111,43 @@ def build_ast_fact_edges(tok, code_source: str) -> list:
     return facts
 
 
-def build_cooccurrence_edges(ids: list, min_freq: int = 3, max_freq: int = 80) -> list:
-    """Consecutive-token counts. Thresholds scaled down from swarm.md's
-    (5, 100) -- those assumed 100K-1M tokens, ours are ~50K.
+def build_cooccurrence_edges(ids: list, min_freq: int = 3) -> list:
+    """Consecutive-token counts. Confidence = P(tgt | src), the empirical
+    conditional probability (freq of this pair / total outgoing frequency
+    of src) -- NOT an absolute-frequency clamp against a fixed constant.
+
+    Found and fixed a real, scale-breaking bug: the original formula was
+    confidence=min(0.99, freq/max_freq) with max_freq=80, a constant
+    calibrated for a ~50K-token corpus ("scaled down from swarm.md's (5,
+    100), those assumed 100K-1M tokens, ours are ~50K"). Once the corpus
+    grew to 47M+ tokens (~940x), this stopped meaning anything: a pair
+    occurring ~77 times -- statistical noise at this corpus size -- still
+    computed confidence=0.96 (near-maximum), because the formula only ever
+    compared against the stale absolute constant, never against how many
+    OTHER continuations the same source token had. Concretely diagnosed
+    via inference.py's disagreement-abstention check: a hyper-common token
+    (433 outgoing edges) had a top edge with confidence=0.9625 but
+    weight=0.00000196 -- internally contradictory, and it was vetoing
+    genuinely reasonable neural predictions this way on 9/10 real
+    benchmark prompts. P(tgt | src) fixes this without a magic constant:
+    a token with 433 diffuse possible continuations naturally gets LOW
+    confidence on any single one, honestly reflecting that it isn't a
+    reliable, specific prediction -- no arbitrary scale-dependent cutoff
+    needed. max_freq upper bound removed for the same reason: it used to
+    exclude genuinely common, reliable high-frequency patterns while
+    keeping noisy borderline ones through the confidence formula's back
+    door; a low min_freq noise floor is enough now that confidence itself
+    correctly downweights diffuse/generic edges.
     """
     counts = Counter(zip(ids[:-1], ids[1:]))
     total = sum(counts.values())
+    src_totals: Counter = Counter()
+    for (src, _tgt), freq in counts.items():
+        src_totals[src] += freq
     edges = []
     for (src, tgt), freq in counts.items():
-        if min_freq <= freq <= max_freq:
-            confidence = min(0.99, freq / max_freq)
+        if freq >= min_freq:
+            confidence = freq / src_totals[src]
             edges.append((src, tgt, dict(relation_type="co_occurrence", weight=freq / total,
                                           confidence=confidence, frequency=freq,
                                           provenance="training_corpus")))

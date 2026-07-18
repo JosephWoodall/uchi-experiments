@@ -507,6 +507,52 @@ short-winded, not from incoherent to capable. The next lever is still
 scale (this is 11.6M params; real coding-capable models are 3-4+ orders
 of magnitude larger), not another data/mechanism iteration at this size.
 
+**Root cause of premature generation cutoff, found and fixed.** Diagnosed
+by instrumenting `predict_next` step-by-step on real benchmark prompts:
+on 9/10 tasks, the model's own reasonable top prediction (e.g. "if",
+confidence 0.27-0.31 -- a meaningfully high probability out of 32,768
+tokens) was vetoed by the slow-path disagreement check. Root cause was in
+`graph.py`'s `build_cooccurrence_edges`: confidence was computed as
+`min(0.99, freq/max_freq)` with `max_freq=80`, a constant calibrated for
+the original ~50K-token corpus ("scaled down from swarm.md's (5, 100)").
+Once the corpus grew to 47M+ tokens (~940x), this silently broke: a token
+occurring ~77 times -- statistical noise at this scale -- still computed
+confidence=0.9625 (near-maximum), regardless of how many OTHER
+continuations that same source token had. Concretely: a hyper-common
+token (433 outgoing edges) had a top edge with confidence=0.9625 but
+weight=0.00000196 -- internally contradictory -- and its generic,
+low-value suggestion was vetoing the model's own reasonable prediction on
+9 of 10 real benchmark prompts via the disagreement-abstention rule.
+
+Fixed by replacing the absolute-frequency clamp with the empirical
+conditional probability P(tgt | src) (freq of this pair / total outgoing
+frequency of src) -- scale-invariant, no magic constant needed. A token
+with 433 diffuse continuations now honestly gets low confidence on any
+single one, rather than a stale threshold making it look artificially
+certain. Also removed the `max_freq` upper-bound filter, which had been
+excluding genuinely reliable high-frequency patterns while letting noisy
+borderline ones through via the broken confidence formula.
+
+**Verified with real before/after evidence, not just the fix landing:**
+before, both diagnosed prompts abstained at step 0. After, `is_prime`
+generated 5+ real tokens with no abstention (`if n == 0: raise` -- a
+genuinely sensible edge-case check), `clamp` reached step 4. Rerunning
+the full 10-task benchmark confirmed this generalizes: baseline now
+produces substantially longer, more syntactically-coherent attempts
+across the board (e.g. `"if n == 0: raise ValueError('n must be a
+integer')"`), not the immediate 1-token abstentions from before.
+
+**Honest result: still 0/10 on the strict pass/fail metric.** Fixing
+premature cutoff exposed a *different*, previously-invisible failure
+mode: degenerate repetition loops (the same phrase repeated 8+ times
+verbatim) plus smaller syntax gaps (missing colons after `if`, unclosed
+string literals). This is a classic small-model autoregressive failure,
+not a grounding/abstention problem -- it was always latent, just never
+reachable before because generation used to stop after 1-2 tokens. Real,
+verified progress on the diagnosed question (why generation cut short);
+a distinct, newly-visible problem (why longer generation degenerates)
+is the next one to solve, not yet attempted.
+
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
 being cheap and checkable against something real (parse validity, a real
