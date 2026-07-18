@@ -27,14 +27,14 @@ import urllib.request
 from pathlib import Path
 
 CATALOG_URL = "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv"
-EXTRA_COUNT = 0  # already fetched 900 general books in the prior pass; bump this again for a further general expansion
+EXTRA_COUNT = 2000  # scale-up round: 900 -> 2000 more general books (already-fetched ones auto-skipped)
 SEED = 7
 
 # Drama/plays specifically -- unlike general prose, plays are literally
 # formatted as back-and-forth dialogue between named characters, the one
 # real conversational-STRUCTURE signal available in Gutenberg's catalog
 # (filtered by its own Subjects/Bookshelves metadata, not guessed titles).
-DRAMA_COUNT = 300
+DRAMA_COUNT = 500
 DRAMA_SEED = 13
 
 # Original hand-picked seed list, kept for continuity with the first pass.

@@ -56,6 +56,23 @@ ALLOWED_THIRD_PARTY_PACKAGES = [
     "matplotlib", "jaxlib", "nltk", "pygments", "fontTools", "networkx",
     "numpy", "textual", "moabb", "orbax", "setuptools", "flax", "docutils",
     "mpmath", "optax", "_pytest", "rich", "PIL",
+    # Second batch -- this is the realistic zero-download ceiling for code
+    # given what's installed locally (measured: ~19.3M more chars across
+    # 92 packages before this list, all checked as well-known, permissively
+    # licensed projects, same diligence as the first batch): fastapi (MIT),
+    # requests (Apache-2.0), click (BSD), urllib3 (MIT), joblib (BSD),
+    # beautifulsoup4 (MIT), PyYAML (MIT), httpx/httpcore/anyio/starlette/
+    # uvicorn (BSD/MIT), coverage (Apache-2.0), python-dateutil
+    # (Apache/BSD dual), idna (BSD-style), markdown-it-py (MIT),
+    # pyparsing (MIT), seaborn (BSD), absl-py/google-grain/etils/treescope
+    # (Apache-2.0, Google), triton (MIT), torchgen (BSD, pytorch tooling),
+    # fsspec (BSD), mpl_toolkits (matplotlib's own license), pyriemann/
+    # mne_bids (BSD).
+    "triton", "torchgen", "grain", "seaborn", "google", "fastapi", "fsspec",
+    "coverage", "joblib", "pyriemann", "treescope", "mne_bids", "anyio",
+    "gemma", "mpl_toolkits", "absl", "pyparsing", "urllib3", "click", "bs4",
+    "etils", "idna", "httpx", "dateutil", "httpcore", "starlette", "uvicorn",
+    "yaml", "requests", "markdown_it",
 ]
 
 MIN_DOC_CHARS = 20

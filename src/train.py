@@ -56,6 +56,17 @@ SIZES = {
     # embedding table's cost, which is proportionally bigger now that vocab
     # grew 8x: 11.6M params plain vs 10.05M with rank=64 factoring.
     "xl": dict(d_model=256, n_layer=12, n_head=8),
+    # Scale-up round: text and code domains now have very different
+    # realistic data ceilings (text scales easily via Gutenberg, code's
+    # zero-download ceiling is ~52M tokens with local site-packages
+    # exhausted) -- growing one shared size for both would over-parameterize
+    # code again. "xxl" is sized for text specifically (paired with
+    # --embedding-rank 96): at the current vocab=32768, 28.08M params
+    # targets a Chinchilla-ideal ~561.6M tokens, close to text's projected
+    # ~428M-token post-expansion size (~1.3x under, not 10x+ under like
+    # forcing code onto this size would be). code stays on "xl" -- its
+    # ~52M-token ceiling is already reasonably matched there.
+    "xxl": dict(d_model=384, n_layer=14, n_head=8),
 }
 
 PROMPTS = {
