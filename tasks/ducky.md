@@ -432,6 +432,81 @@ unlimited-context property remains real and structurally verified
 (constant memory, linear time), just not something this size of model can
 be trained to exploit.
 
+**Major data expansion + retrain (this round): real progress, honest limits.**
+Motivated by the 0/10 benchmark result and its diagnosed Chinchilla deficit
+(10M params, ~387K training tokens, ~570x under the ~20-tokens/param
+target). Expanded both domains substantially:
+- Code: full local stdlib (565 modules) + curated, individually
+  license-checked site-packages libraries (torch, sympy, scipy, jax,
+  pandas, sklearn, matplotlib, numpy, networkx, PIL, etc. -- all BSD/MIT/
+  Apache, none GPL), zero download. 2.8M -> 47.2M tokens.
+- Text: rj + 1,255 curated Gutenberg texts (sampled from Gutenberg's real
+  public catalog, not hand-listed -- 957 general + 298 specifically
+  drama/dialogue, filtered by the catalog's own Subjects/Bookshelves
+  metadata) + NLTK's nps_chat corpus (10,567 real chat posts). 14.7M ->
+  135M tokens. Drama/chat added specifically to address a structural gap:
+  plain prose teaches fluency, not conversational turn-taking.
+- Vocabulary regrown 8192 -> 32768 to match the far more diverse corpus
+  (verified real compression gains: 17-25% fewer tokens on ML code and
+  philosophical prose specifically, the content that motivated the growth).
+- Code corpus split into `corpus_core.txt` (stdlib, simple utility style)
+  and `corpus_breadth.txt` (site-packages, ML-library-internals style) with
+  a weighted per-example sampler (`get_weighted_code_batch`, same pattern
+  as the existing `get_joint_batch`) so core's style -- the style
+  `bench_ducky.py`'s held-out tasks actually test -- isn't diluted to a
+  ~6.6%-by-volume rounding error by the much larger breadth pool.
+- Synthetic relational data folded in as a third weighted pool, with a
+  validated redundancy-pruning step: measured that 43.8%/46.3% of raw
+  chains had a Python builtin (`open`, `len`, `isinstance`, ...) as the
+  bridge/endpoint -- generic, low-signal chains. Filtering them out
+  (`filter_generic_chains`) cut the set to 27.4% of its original size
+  *and improved* held-out generalization (63.7% vs 61.1% accuracy, 0.836
+  vs 0.769 mean margin) -- compressing out redundant signal measurably
+  helped, exactly the hypothesis it was built to test (single seed, same
+  caveat as always).
+
+**Retrain result, both domains, xl size (11.6M params, vocab=32768):**
+text best val 5.1040 (full 8000-step budget, never early-stopped) --
+and, for the first time this entire project, a genuinely coherent
+generated sample: *"ROMEO: Your little voice seems to me more interesting
+than the scene. I know your words, and the eyes of my mind, who are
+merely delightful--the heavy-lined-aged, proudly-filled man..."* -- real
+grammar, real punctuation, not word-salad. code best val 3.4822
+(early-stopped at step 5750/8000) -- lower than the previous
+8192-vocab-generation's 5.1643 despite a 4x harder (bigger) vocab, meaning
+the data expansion more than offset the harder softmax.
+
+**Real scaling bug found and fixed while testing this:** `ducky.py`'s SDK
+setup did three separate full-corpus `ast.parse` calls (`build_symbol_table`,
+`build_call_graph`, `build_graph`'s AST-fact extraction) against the full
+~162MB combined corpus.txt -- fine at the old, smaller scale, but now slow
+enough to hit real timeout/resource limits (measured: killed after several
+minutes, repeatedly). Fixed the same way as `synthetic_relations.py`'s call
+graph: scoped to `corpus_core.txt` (stdlib, ~11MB) instead -- cleaner,
+more idiomatic source for identifier/AST grounding anyway, not just faster.
+Setup time: indefinite/killed -> 23.6s (warm) / ~177s (cold, first
+tokenization pass). Token-level signals (n-gram index, co-occurrence
+edges) were confirmed already fast at the new scale (12s for 39M tokens)
+and stayed on the full corpus.
+
+**Honest benchmark result: still 0/10 on all four mechanisms**, rerun
+against the new xl checkpoint. Not sugarcoating the headline number. But
+the *character* of the failures shifted in a way worth being precise
+about: every failure before this round was an empty completion or pure
+gibberish; now resample/MCTS produce plausible, contextually-sensible
+partial fragments (`obj`, `words,`, `paths`, `text`, `values`) that fail
+via `NameError` (an undefined variable used, not nonsense) because
+generation gets cut short by calibrated abstention before completing a
+valid statement -- not because the tokens themselves are wrong. Real,
+measurable local-token-quality improvement, consistent with the text
+domain's coherent sample. But the actual capability the benchmark
+tests -- sustaining a complete, valid, multi-line function body -- still
+isn't there. Don't conflate "more coherent" with "more capable": this
+round's data/vocab work moved the model from incoherent to coherent-but-
+short-winded, not from incoherent to capable. The next lever is still
+scale (this is 11.6M params; real coding-capable models are 3-4+ orders
+of magnitude larger), not another data/mechanism iteration at this size.
+
 **Non-negotiable scope discipline:** Ducky's job is next-token prediction
 quality first. Every grounding/abstention addition earns its place by
 being cheap and checkable against something real (parse validity, a real

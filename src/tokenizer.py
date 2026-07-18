@@ -2,19 +2,19 @@
 the same vocab can later be reused as the "text" leg of a multimodal token
 space (see tasks/core_principle.md).
 
-Grown from 1024 -> 8192: the small vocab turned out to be the most
-foundational, least-tested limiting factor for output quality -- rare
-identifiers/words fragment to near-character level at 1024 tokens, capping
-AST-fact precision, identifier grounding, and basic fluency all at once
-(see tasks/ducky.md's architecture writeup). Versioned by vocab size
-(spm_{vocab_size}.model/.vocab) rather than one fixed filename -- the old
-1024-vocab tokenizer stays on disk, untouched, so any earlier checkpoint
-that needs it can still find it. This is a new generation of Ducky, not a
-patch on the old one: every checkpoint trained under the 1024 vocab is
-incompatible with the new default (different vocab means different token
-ID meanings, different embedding table shape) and won't reload correctly
-against Tokenizer() going forward without explicitly requesting
-vocab_size=1024.
+Grown twice now: 1024 -> 8192 -> 32768. The first growth (1024->8192) fixed
+rare identifiers/words fragmenting to near-character level. This growth is
+driven by the corpus itself growing ~30-100x (stdlib + curated site-packages
+libraries for code; 1,255 Gutenberg texts + chat for text) and getting far
+more diverse -- ML-library identifiers (torch/jax/sklearn) and much broader
+English vocabulary than the 8192 vocab was ever trained to compress well.
+Versioned by vocab size (spm_{vocab_size}.model/.vocab) rather than one
+fixed filename -- every earlier vocab generation stays on disk, untouched,
+so any earlier checkpoint that needs it can still find it. Checkpoints
+trained under a smaller vocab are incompatible with a newer default
+(different vocab means different token ID meanings, different embedding
+table shape) and won't reload correctly against Tokenizer() going forward
+without explicitly requesting the matching vocab_size.
 """
 from pathlib import Path
 
@@ -22,7 +22,7 @@ import sentencepiece as spm
 
 ROOT = Path(__file__).resolve().parent.parent
 TOK_DIR = ROOT / "data" / "tokenizer"
-VOCAB_SIZE = 8192
+VOCAB_SIZE = 32768
 
 
 def _model_prefix(vocab_size: int) -> Path:
@@ -40,8 +40,10 @@ def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
     code = (ROOT / "data" / "code" / "corpus.txt").read_text()
     gutenberg_path = ROOT / "data" / "text" / "gutenberg_corpus.txt"
     gutenberg = gutenberg_path.read_text() if gutenberg_path.exists() else ""
+    chat_path = ROOT / "data" / "text" / "chat_corpus.txt"
+    chat = chat_path.read_text() if chat_path.exists() else ""
     combined_path = TOK_DIR / f"_combined_{vocab_size}.txt"
-    combined_path.write_text(rj + "\n" + gutenberg + "\n" + code)
+    combined_path.write_text(rj + "\n" + gutenberg + "\n" + chat + "\n" + code)
 
     spm.SentencePieceTrainer.train(
         input=str(combined_path),
@@ -53,6 +55,13 @@ def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
         eos_id=2,
         pad_id=0,
         unk_id=3,
+        # The combined training text is now ~600MB+ (vs a few MB originally)
+        # -- cap and shuffle the sentences SentencePiece actually trains on
+        # so this stays tractable, rather than processing every line of
+        # every book. 5M sentences is generous for stable BPE merge
+        # statistics well beyond this vocab size.
+        input_sentence_size=5_000_000,
+        shuffle_input_sentence=True,
     )
     combined_path.unlink()
     return model_path

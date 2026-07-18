@@ -80,25 +80,38 @@ def load_lm_corpus(name: str, tok: Tokenizer, val_frac: float = 0.1):
 
 
 def load_weighted_code_corpus(tok: Tokenizer, val_frac: float = 0.1):
-    """Stdlib ('core') and site-packages libraries ('breadth') as two
-    separate tensors, not one concatenated corpus -- core is ~11MB of
-    simple, idiomatic utility-style code (the style bench_ducky.py's
-    held-out tasks actually test); breadth is ~150MB of real code, but
-    dominated by large ML/scientific library internals, a different
-    style. Uniform sampling over the concatenated corpus.txt would make
-    core a rounding error (~6.6% by volume) during training. Returns
-    {"core": (train, val), "breadth": (train, val)} for get_weighted_code_batch.
+    """Stdlib ('core'), site-packages libraries ('breadth'), and synthetic
+    relational statements ('synthetic') as separate tensors, not one
+    concatenated corpus. core is ~11MB of simple, idiomatic utility-style
+    code (the style bench_ducky.py's held-out tasks actually test);
+    breadth is ~150MB of real code, but dominated by large ML/scientific
+    library internals, a different style; synthetic is deterministically
+    composed from real call-graph chains (synthetic_relations.py),
+    validated to teach genuine compositional generalization (70.4%/69.3%
+    held-out accuracy across two independent checks, see tasks/ducky.md).
+    Uniform sampling over one concatenated corpus would make core a
+    rounding error (~6.6% by volume) and synthetic disappear entirely.
+    Returns {"core": (train, val), "breadth": (train, val), "synthetic":
+    (train, val)} for get_weighted_code_batch -- "synthetic" is only
+    included if synthetic_relational.txt exists (opt-in via that file's
+    presence, so plain code training still works without it).
     """
     core_path = ROOT / "data" / "code" / "corpus_core.txt"
     breadth_path = ROOT / "data" / "code" / "corpus_breadth.txt"
+    synthetic_path = ROOT / "data" / "code" / "synthetic_relational.txt"
     core_ids = _tokenize_corpus(tok, "code_core", core_path.read_text())
     breadth_ids = _tokenize_corpus(tok, "code_breadth", breadth_path.read_text())
     n_val_core = int(len(core_ids) * val_frac)
     n_val_breadth = int(len(breadth_ids) * val_frac)
-    return {
+    pools = {
         "core": (core_ids[:-n_val_core], core_ids[-n_val_core:]),
         "breadth": (breadth_ids[:-n_val_breadth], breadth_ids[-n_val_breadth:]),
     }
+    if synthetic_path.exists():
+        synthetic_ids = _tokenize_corpus(tok, "code_synthetic", synthetic_path.read_text())
+        n_val_synthetic = max(1, int(len(synthetic_ids) * val_frac))
+        pools["synthetic"] = (synthetic_ids[:-n_val_synthetic], synthetic_ids[-n_val_synthetic:])
+    return pools
 
 
 def get_weighted_code_batch(ids_by_pool: dict, weights: dict, batch_size: int, block_size: int, n_future: int = 1):

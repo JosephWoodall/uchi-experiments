@@ -23,8 +23,11 @@ direct calls to simple Name-bound functions are tracked (not
 attribute-method calls, which would need real type inference to resolve).
 """
 import ast
+import builtins
 import random
 import re
+
+_BUILTIN_NAMES = frozenset(dir(builtins))
 
 TEMPLATES = [
     "# {a} calls {b}, which calls {c} -- so {a} transitively depends on {c}.",
@@ -75,6 +78,18 @@ def find_transitive_chains(call_graph: dict, max_chains: int = None) -> list:
     if max_chains is not None and len(chains) > max_chains:
         chains = random.sample(chains, max_chains)
     return chains
+
+
+def filter_generic_chains(chains: list) -> list:
+    """Drops chains whose bridge or endpoint is a Python builtin (open,
+    len, isinstance, str, ...) -- measured, not assumed: on the stdlib
+    call graph, 'open' alone is the bridge in 20.5% of all chains, and
+    43.8%/46.3% have a builtin bridge/endpoint respectively. "X calls
+    open, which is called by everything" carries almost no distinguishing
+    signal about X specifically, unlike a chain through a real,
+    domain-specific function. Roughly halves the chain count.
+    """
+    return [(a, b, c) for a, b, c in chains if b not in _BUILTIN_NAMES and c not in _BUILTIN_NAMES]
 
 
 def synthesize_examples(chains: list, seed: int = 0) -> list:

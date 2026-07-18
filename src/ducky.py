@@ -43,26 +43,29 @@ SETUP_CACHE_DIR = ROOT / "data" / "cache" / "ducky_setup"
 # run the same SDK against either backbone and see the difference directly,
 # not just read about it in the results table.
 #
-# code/* point at the new-generation checkpoints (vocab=8192, xl depth,
-# rank-64 embedding, grown corpus) -- hybrid beat dense here too (best val
-# 5.1643 vs 5.2873), same architecture win as the old generation, now
-# confirmed at the new scale. rj/* still point at the old (vocab=1024)
-# generation -- rj hasn't been retrained under the new vocab/depth yet;
-# self.tok's vocab_size is read per-checkpoint from config.json (falling
-# back to 1024 for checkpoints that predate that field), so old and new
-# generations load correctly side by side.
+# code/* and text/* point at the latest-generation checkpoints (vocab=32768,
+# xl depth, rank-64 embedding, ~30-100x expanded corpus per domain --
+# stdlib+curated site-packages for code, rj+1,255 Gutenberg texts+chat for
+# text). code: best val 3.4822 (was 5.1643 under the old 8192-vocab/smaller
+# corpus generation -- lower despite the harder, 4x bigger vocab, meaning
+# the data expansion more than offset it). text: best val 5.1040, and the
+# first checkpoint this whole project to produce genuinely coherent
+# English samples, not word-salad. rj/* still point at the old (vocab=1024)
+# generation, kept only for backward-compatible comparison -- "text" is
+# rj's real successor domain going forward. self.tok's vocab_size is read
+# per-checkpoint from config.json (falling back to 1024 for checkpoints
+# that predate that field), so all three generations load correctly side
+# by side.
 DEFAULT_RUNS = {
     ("code", "hybrid"): "code_base_xl_rwkv_rank64",
     ("code", "dense"): "code_base_xl_rank64",
+    ("text", "hybrid"): "text_base_xl_rwkv_rank64",
+    # ("text", "dense") not yet trained -- only the hybrid backbone has
+    # been run on the text domain so far.
     ("rj", "hybrid"): "rj_base_m",  # note: this checkpoint is hybrid despite the
     # plain-looking name -- a relic of an earlier naming-collision bug (fixed for
     # all runs since), see tasks/ducky.md
     ("rj", "dense"): "rj_base_m_seed1",
-    # ("text", "hybrid")/("text", "dense") intentionally not yet present --
-    # "text" (rj + Gutenberg) has no trained checkpoint yet. Add both here
-    # once that training run completes; Ducky(domain="text") will raise a
-    # clear KeyError until then rather than silently pointing at the wrong
-    # (much smaller, Shakespeare-only) checkpoint.
 }
 
 
@@ -122,7 +125,19 @@ class Ducky:
             if cached.get("checkpoint_mtime") != checkpoint_mtime:
                 cached = None  # checkpoint changed since this was cached -- rebuild
 
-        code_source = (ROOT / "data" / "code" / "corpus.txt").read_text()
+        # corpus_core.txt (stdlib only, ~11MB) for everything that does
+        # ast.parse -- symbol table, call graph, AST-fact edges. The full
+        # corpus.txt (~162MB incl. curated site-packages libraries) made
+        # each of these take long enough to hit real timeout/resource
+        # limits (measured: build_symbol_table alone was killed after
+        # several minutes). Same reasoning already applied to
+        # synthetic_relations.py's call graph: stdlib is cleaner, more
+        # idiomatic, and better-matched to what identifier grounding and
+        # AST facts are actually for, not just faster to parse. Token-level
+        # signals (ngram_index, co-occurrence edges) still use the FULL
+        # corpus below -- those were measured fast (12s for 39M tokens)
+        # and benefit from the full breadth.
+        code_source = (ROOT / "data" / "code" / "corpus_core.txt").read_text()
         # load_lm_corpus creates the vocab-versioned cache file if it doesn't
         # exist yet -- a raw torch.load here would assume it already does,
         # which broke the first time a checkpoint used a vocab size nothing

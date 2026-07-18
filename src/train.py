@@ -238,9 +238,18 @@ def run(args):
             # internals) -- uniform sampling over the concatenated corpus
             # would make core a ~6.6%-by-volume rounding error. Weighted
             # per-example pool choice instead, same pattern as
-            # get_joint_batch already uses for pixel/audio.
+            # get_joint_batch already uses for pixel/audio. A third
+            # 'synthetic' pool (deterministic call-graph compositions,
+            # validated to teach real generalization) is added only if
+            # data/code/synthetic_relational.txt exists.
             pools = load_weighted_code_corpus(tok)
-            code_weights = {"core": args.code_core_weight, "breadth": 1 - args.code_core_weight}
+            if "synthetic" in pools:
+                s = args.code_synthetic_weight
+                code_weights = {"core": args.code_core_weight * (1 - s),
+                                "breadth": (1 - args.code_core_weight) * (1 - s),
+                                "synthetic": s}
+            else:
+                code_weights = {"core": args.code_core_weight, "breadth": 1 - args.code_core_weight}
             train_pools = {k: v[0] for k, v in pools.items()}
             val_pools = {k: v[1] for k, v in pools.items()}
         else:
@@ -417,6 +426,11 @@ if __name__ == "__main__":
                     "by raw size -- without this, core's simple-utility style becomes a rounding error "
                     "during training. Set to None (via code, not CLI) to disable and use plain uniform "
                     "sampling over the concatenated corpus instead.")
+    p.add_argument("--code-synthetic-weight", type=float, default=0.15,
+                    help="--dataset code only, applied on top of --code-core-weight when "
+                    "data/code/synthetic_relational.txt exists: fraction of training examples drawn "
+                    "from synthetic call-graph-composed statements, remainder split between core/breadth "
+                    "per --code-core-weight.")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--num-threads", type=int, default=8, help="torch.set_num_threads() -- measured optimal on this "
                     "machine (20 logical cores); the default 10 is close but 8 was faster, and 16-20 was 4-6x slower "
