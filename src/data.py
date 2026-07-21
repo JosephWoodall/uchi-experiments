@@ -32,15 +32,22 @@ CACHE_DIR = ROOT / "data" / "cache"
 
 
 def _tokenize_corpus(tok: Tokenizer, name: str, text: str) -> torch.Tensor:
-    """Cache filename is versioned by vocab_size -- the fixed name (name.pt)
-    used to be shared across every tokenizer version, so growing the vocab
-    (1024 -> 8192) silently overwrote the cache with new-vocab ids and broke
-    loading any older checkpoint through it. Old-vocab cache files stay on
-    disk under their own name (name_1024.pt), same fix as tokenizer.py's
-    MODEL_PREFIX versioning.
+    """Cache filename is versioned by tok.cache_key (vocab_size for a plain
+    Tokenizer(vocab_size=N) -- identical to every existing cache filename,
+    zero disruption) rather than vocab_size directly -- the fixed name
+    (name.pt) used to be shared across every tokenizer version, so growing
+    the vocab (1024 -> 8192) silently overwrote the cache with new-vocab
+    ids and broke loading any older checkpoint through it (same fix as
+    tokenizer.py's MODEL_PREFIX versioning). Keying by raw vocab_size alone
+    isn't quite enough, though: a `variant` or `model_path`-loaded tokenizer
+    can share a vocab_size with a DIFFERENT tokenizer file that has
+    different token-ID mappings (found via ducky.py's legacy spm.model vs.
+    the retrained spm_1024.model both being "1024") -- tok.cache_key
+    distinguishes those cases while staying identical to str(vocab_size)
+    for every plain, pre-existing caller.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{name}_{tok.vocab_size}.pt"
+    cache_path = CACHE_DIR / f"{name}_{tok.cache_key}.pt"
     if cache_path.exists():
         return torch.load(cache_path)
     ids = tok.encode(text)

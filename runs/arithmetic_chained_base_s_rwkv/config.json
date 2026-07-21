@@ -1,0 +1,14 @@
+{
+  "dataset": "arithmetic_chained",
+  "arm": "base",
+  "size": "s",
+  "block_size": 128,
+  "rwkv_hybrid": true,
+  "attention_layers": [
+    2
+  ],
+  "vocab_size": 1024,
+  "n_params": 223936,
+  "best_step": 3000,
+  "best_val": 0.5336566686630249
+}

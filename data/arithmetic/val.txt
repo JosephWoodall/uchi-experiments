@@ -1,0 +1,1849 @@
+Step 1: 19 * 5 = 95
+Step 2: 95 - 1 = 94
+Step 3: 94 - 19 = 75
+Step 4: 75 - 20 = 55
+Answer: 55
+
+Step 1: 5 * 13 = 65
+Step 2: 7 + 65 = 72
+Step 3: 72 - 19 = 53
+Step 4: 53 - 14 = 39
+Answer: 39
+
+Step 1: 20 * 10 = 200
+Step 2: 4 * 18 = 72
+Step 3: 200 + 72 = 272
+Answer: 272
+
+Step 1: 5 * 16 = 80
+Step 2: 80 * 14 = 1120
+Step 3: 1120 / 5 = 224
+Step 4: 3 + 224 = 227
+Answer: 227
+
+Step 1: 17 * 19 = 323
+Step 2: 14 + 323 = 337
+Step 3: 337 - 8 = 329
+Step 4: 329 + 7 = 336
+Answer: 336
+
+Step 1: 8 * 20 = 160
+Step 2: 160 + 4 = 164
+Step 3: 164 - 1 = 163
+Answer: 163
+
+Step 1: 13 * 20 = 260
+Answer: 260
+
+Step 1: 13 * 1 = 13
+Step 2: 3 + 3 = 6
+Step 3: 6 + 13 = 19
+Step 4: 19 - 16 = 3
+Answer: 3
+
+Step 1: 6 * 13 = 78
+Step 2: 78 + 8 = 86
+Step 3: 86 + 13 = 99
+Answer: 99
+
+Step 1: 20 / 1 = 20
+Step 2: 7 - 3 = 4
+Step 3: 4 - 20 = -16
+Step 4: -16 - 19 = -35
+Answer: -35
+
+Step 1: 19 + 17 = 36
+Answer: 36
+
+Step 1: 15 * 12 = 180
+Step 2: 180 + 13 = 193
+Step 3: 193 + 4 = 197
+Step 4: 197 - 11 = 186
+Answer: 186
+
+Step 1: 6 - 18 = -12
+Step 2: -12 + 2 = -10
+Step 3: -10 + 19 = 9
+Answer: 9
+
+Step 1: 17 - 19 = -2
+Step 2: -2 - 20 = -22
+Answer: -22
+
+Step 1: 13 * 15 = 195
+Step 2: 195 * 18 = 3510
+Step 3: 3510 - 15 = 3495
+Step 4: 3495 - 17 = 3478
+Answer: 3478
+
+Step 1: 1 * 1 = 1
+Step 2: 14 * 8 = 112
+Step 3: 112 * 2 = 224
+Step 4: 1 - 224 = -223
+Answer: -223
+
+Step 1: 18 - 9 = 9
+Answer: 9
+
+Step 1: 3 * 3 = 9
+Step 2: 16 + 9 = 25
+Step 3: 25 + 4 = 29
+Answer: 29
+
+Step 1: 16 * 16 = 256
+Step 2: 256 * 20 = 5120
+Step 3: 9 - 19 = -10
+Step 4: -10 - 5120 = -5130
+Answer: -5130
+
+Step 1: 10 * 8 = 80
+Step 2: 10 - 80 = -70
+Step 3: -70 - 15 = -85
+Answer: -85
+
+Step 1: 4 * 15 = 60
+Step 2: 60 + 6 = 66
+Step 3: 66 - 13 = 53
+Step 4: 53 + 14 = 67
+Answer: 67
+
+Step 1: 20 + 6 = 26
+Step 2: 26 - 12 = 14
+Step 3: 14 + 9 = 23
+Step 4: 23 + 19 = 42
+Answer: 42
+
+Step 1: 15 * 3 = 45
+Step 2: 45 - 17 = 28
+Step 3: 28 - 1 = 27
+Step 4: 27 - 19 = 8
+Answer: 8
+
+Step 1: 8 + 10 = 18
+Step 2: 18 - 6 = 12
+Answer: 12
+
+Step 1: 20 - 17 = 3
+Step 2: 3 - 11 = -8
+Step 3: -8 - 15 = -23
+Answer: -23
+
+Step 1: 4 * 9 = 36
+Step 2: 36 * 4 = 144
+Step 3: 144 / 18 = 8
+Answer: 8
+
+Step 1: 6 - 17 = -11
+Answer: -11
+
+Step 1: 1 + 4 = 5
+Step 2: 5 - 16 = -11
+Answer: -11
+
+Step 1: 6 - 19 = -13
+Answer: -13
+
+Step 1: 15 * 17 = 255
+Step 2: 255 / 15 = 17
+Step 3: 17 + 4 = 21
+Answer: 21
+
+Step 1: 5 - 17 = -12
+Step 2: -12 + 9 = -3
+Answer: -3
+
+Step 1: 10 - 16 = -6
+Step 2: -6 + 12 = 6
+Step 3: 6 - 18 = -12
+Answer: -12
+
+Step 1: 13 - 6 = 7
+Step 2: 7 + 18 = 25
+Step 3: 25 - 2 = 23
+Step 4: 23 + 7 = 30
+Answer: 30
+
+Step 1: 4 + 18 = 22
+Answer: 22
+
+Step 1: 15 * 8 = 120
+Step 2: 120 + 15 = 135
+Answer: 135
+
+Step 1: 9 * 1 = 9
+Step 2: 9 * 7 = 63
+Step 3: 63 + 4 = 67
+Answer: 67
+
+Step 1: 8 + 15 = 23
+Step 2: 23 + 1 = 24
+Step 3: 24 + 14 = 38
+Step 4: 38 + 19 = 57
+Answer: 57
+
+Step 1: 6 * 18 = 108
+Step 2: 108 / 1 = 108
+Step 3: 108 + 20 = 128
+Step 4: 128 + 5 = 133
+Answer: 133
+
+Step 1: 17 * 18 = 306
+Step 2: 13 + 16 = 29
+Step 3: 29 - 306 = -277
+Answer: -277
+
+Step 1: 3 - 6 = -3
+Answer: -3
+
+Step 1: 4 * 8 = 32
+Step 2: 8 / 8 = 1
+Step 3: 14 - 32 = -18
+Step 4: -18 + 1 = -17
+Answer: -17
+
+Step 1: 12 + 19 = 31
+Answer: 31
+
+Step 1: 12 * 14 = 168
+Step 2: 13 - 13 = 0
+Step 3: 0 - 4 = -4
+Step 4: -4 + 168 = 164
+Answer: 164
+
+Step 1: 9 * 11 = 99
+Step 2: 99 * 7 = 693
+Answer: 693
+
+Step 1: 4 * 10 = 40
+Step 2: 40 + 11 = 51
+Step 3: 51 - 2 = 49
+Step 4: 49 + 17 = 66
+Answer: 66
+
+Step 1: 3 * 15 = 45
+Step 2: 1 - 45 = -44
+Answer: -44
+
+Step 1: 19 + 13 = 32
+Step 2: 32 + 13 = 45
+Answer: 45
+
+Step 1: 8 * 15 = 120
+Step 2: 120 + 10 = 130
+Step 3: 130 - 11 = 119
+Answer: 119
+
+Step 1: 4 * 4 = 16
+Step 2: 6 + 5 = 11
+Step 3: 11 + 16 = 27
+Step 4: 27 - 11 = 16
+Answer: 16
+
+Step 1: 13 - 7 = 6
+Answer: 6
+
+Step 1: 17 * 1 = 17
+Step 2: 17 + 2 = 19
+Step 3: 19 + 4 = 23
+Answer: 23
+
+Step 1: 4 * 15 = 60
+Step 2: 15 / 5 = 3
+Step 3: 60 + 2 = 62
+Step 4: 62 - 3 = 59
+Answer: 59
+
+Step 1: 3 * 15 = 45
+Step 2: 45 * 20 = 900
+Step 3: 6 / 3 = 2
+Step 4: 900 + 2 = 902
+Answer: 902
+
+Step 1: 3 * 20 = 60
+Step 2: 60 / 12 = 5
+Answer: 5
+
+Step 1: 15 * 11 = 165
+Step 2: 12 + 15 = 27
+Step 3: 27 + 4 = 31
+Step 4: 31 - 165 = -134
+Answer: -134
+
+Step 1: 1 - 20 = -19
+Step 2: -19 - 19 = -38
+Step 3: -38 + 10 = -28
+Step 4: -28 + 4 = -24
+Answer: -24
+
+Step 1: 10 * 16 = 160
+Step 2: 160 - 18 = 142
+Step 3: 142 + 18 = 160
+Step 4: 160 - 2 = 158
+Answer: 158
+
+Step 1: 16 * 20 = 320
+Step 2: 320 * 2 = 640
+Step 3: 8 - 15 = -7
+Step 4: -7 - 640 = -647
+Answer: -647
+
+Step 1: 9 * 7 = 63
+Step 2: 20 + 15 = 35
+Step 3: 35 + 63 = 98
+Answer: 98
+
+Step 1: 3 * 15 = 45
+Answer: 45
+
+Step 1: 1 - 10 = -9
+Step 2: -9 - 20 = -29
+Answer: -29
+
+Step 1: 9 / 9 = 1
+Step 2: 1 * 1 = 1
+Step 3: 10 - 5 = 5
+Step 4: 5 + 1 = 6
+Answer: 6
+
+Step 1: 2 / 1 = 2
+Step 2: 2 + 2 = 4
+Answer: 4
+
+Step 1: 16 * 18 = 288
+Step 2: 3 + 288 = 291
+Answer: 291
+
+Step 1: 12 * 5 = 60
+Answer: 60
+
+Step 1: 19 + 17 = 36
+Step 2: 36 + 5 = 41
+Answer: 41
+
+Step 1: 3 * 11 = 33
+Answer: 33
+
+Step 1: 13 * 18 = 234
+Step 2: 19 + 234 = 253
+Step 3: 253 + 13 = 266
+Step 4: 266 + 11 = 277
+Answer: 277
+
+Step 1: 8 * 3 = 24
+Step 2: 24 * 7 = 168
+Answer: 168
+
+Step 1: 9 * 1 = 9
+Step 2: 12 + 9 = 21
+Step 3: 21 + 9 = 30
+Answer: 30
+
+Step 1: 14 + 6 = 20
+Answer: 20
+
+Step 1: 1 * 3 = 3
+Step 2: 9 + 3 = 12
+Step 3: 12 + 4 = 16
+Step 4: 16 + 17 = 33
+Answer: 33
+
+Step 1: 13 * 5 = 65
+Step 2: 12 - 65 = -53
+Answer: -53
+
+Step 1: 20 * 5 = 100
+Step 2: 5 - 100 = -95
+Answer: -95
+
+Step 1: 7 * 1 = 7
+Step 2: 7 * 5 = 35
+Answer: 35
+
+Step 1: 18 * 9 = 162
+Answer: 162
+
+Step 1: 12 * 7 = 84
+Step 2: 84 * 15 = 1260
+Step 3: 1260 + 17 = 1277
+Answer: 1277
+
+Step 1: 9 + 14 = 23
+Step 2: 23 + 1 = 24
+Step 3: 24 - 6 = 18
+Step 4: 18 - 1 = 17
+Answer: 17
+
+Step 1: 10 * 18 = 180
+Answer: 180
+
+Step 1: 13 - 12 = 1
+Step 2: 1 + 16 = 17
+Step 3: 17 + 19 = 36
+Step 4: 36 - 2 = 34
+Answer: 34
+
+Step 1: 14 * 11 = 154
+Step 2: 13 + 154 = 167
+Answer: 167
+
+Step 1: 10 * 16 = 160
+Step 2: 4 + 160 = 164
+Answer: 164
+
+Step 1: 2 - 11 = -9
+Answer: -9
+
+Step 1: 11 * 13 = 143
+Step 2: 143 * 3 = 429
+Step 3: 6 - 429 = -423
+Step 4: -423 + 1 = -422
+Answer: -422
+
+Step 1: 15 + 18 = 33
+Step 2: 33 - 4 = 29
+Step 3: 29 - 20 = 9
+Answer: 9
+
+Step 1: 12 + 17 = 29
+Answer: 29
+
+Step 1: 8 * 10 = 80
+Step 2: 80 * 8 = 640
+Step 3: 640 + 2 = 642
+Answer: 642
+
+Step 1: 19 * 10 = 190
+Step 2: 12 * 4 = 48
+Step 3: 190 + 48 = 238
+Answer: 238
+
+Step 1: 1 * 8 = 8
+Step 2: 8 + 8 = 16
+Answer: 16
+
+Step 1: 10 * 15 = 150
+Step 2: 5 * 19 = 95
+Step 3: 150 - 95 = 55
+Step 4: 55 - 4 = 51
+Answer: 51
+
+Step 1: 2 * 16 = 32
+Step 2: 14 + 32 = 46
+Answer: 46
+
+Step 1: 1 * 11 = 11
+Step 2: 2 * 15 = 30
+Step 3: 11 + 15 = 26
+Step 4: 26 - 30 = -4
+Answer: -4
+
+Step 1: 1 + 4 = 5
+Step 2: 5 - 14 = -9
+Answer: -9
+
+Step 1: 20 * 4 = 80
+Step 2: 80 / 16 = 5
+Step 3: 2 + 5 = 7
+Step 4: 7 - 11 = -4
+Answer: -4
+
+Step 1: 20 - 9 = 11
+Answer: 11
+
+Step 1: 12 + 3 = 15
+Answer: 15
+
+Step 1: 15 * 17 = 255
+Step 2: 6 + 255 = 261
+Answer: 261
+
+Step 1: 6 * 14 = 84
+Step 2: 84 * 12 = 1008
+Step 3: 1008 / 7 = 144
+Answer: 144
+
+Step 1: 11 * 11 = 121
+Step 2: 15 + 121 = 136
+Answer: 136
+
+Step 1: 10 * 6 = 60
+Step 2: 60 * 2 = 120
+Answer: 120
+
+Step 1: 5 + 15 = 20
+Step 2: 20 + 11 = 31
+Answer: 31
+
+Step 1: 13 + 20 = 33
+Step 2: 33 - 8 = 25
+Answer: 25
+
+Step 1: 5 * 3 = 15
+Answer: 15
+
+Step 1: 15 * 19 = 285
+Step 2: 14 - 20 = -6
+Step 3: -6 + 285 = 279
+Answer: 279
+
+Step 1: 3 + 10 = 13
+Answer: 13
+
+Step 1: 13 - 10 = 3
+Step 2: 3 + 1 = 4
+Answer: 4
+
+Step 1: 10 * 12 = 120
+Step 2: 7 + 9 = 16
+Step 3: 16 - 120 = -104
+Step 4: -104 + 2 = -102
+Answer: -102
+
+Step 1: 9 + 5 = 14
+Step 2: 14 + 2 = 16
+Answer: 16
+
+Step 1: 18 / 1 = 18
+Step 2: 20 + 9 = 29
+Step 3: 29 + 18 = 47
+Answer: 47
+
+Step 1: 16 + 19 = 35
+Step 2: 35 + 4 = 39
+Step 3: 39 + 2 = 41
+Answer: 41
+
+Step 1: 16 * 17 = 272
+Step 2: 272 * 4 = 1088
+Step 3: 18 + 1088 = 1106
+Answer: 1106
+
+Step 1: 20 - 16 = 4
+Answer: 4
+
+Step 1: 12 * 4 = 48
+Step 2: 48 / 2 = 24
+Step 3: 24 * 17 = 408
+Step 4: 408 / 12 = 34
+Answer: 34
+
+Step 1: 10 + 7 = 17
+Step 2: 17 + 3 = 20
+Step 3: 20 - 11 = 9
+Answer: 9
+
+Step 1: 16 * 5 = 80
+Step 2: 80 + 11 = 91
+Answer: 91
+
+Step 1: 13 + 1 = 14
+Step 2: 14 - 1 = 13
+Step 3: 13 - 9 = 4
+Answer: 4
+
+Step 1: 3 - 13 = -10
+Answer: -10
+
+Step 1: 12 / 6 = 2
+Step 2: 2 * 9 = 18
+Step 3: 18 * 12 = 216
+Step 4: 216 - 7 = 209
+Answer: 209
+
+Step 1: 2 * 3 = 6
+Step 2: 16 - 6 = 10
+Step 3: 10 - 6 = 4
+Answer: 4
+
+Step 1: 14 - 1 = 13
+Answer: 13
+
+Step 1: 20 * 12 = 240
+Step 2: 9 * 7 = 63
+Step 3: 240 + 63 = 303
+Answer: 303
+
+Step 1: 16 - 19 = -3
+Answer: -3
+
+Step 1: 8 - 10 = -2
+Step 2: -2 - 11 = -13
+Answer: -13
+
+Step 1: 7 * 6 = 42
+Answer: 42
+
+Step 1: 16 * 5 = 80
+Step 2: 80 + 5 = 85
+Answer: 85
+
+Step 1: 20 * 16 = 320
+Step 2: 8 - 12 = -4
+Step 3: -4 + 320 = 316
+Step 4: 316 - 17 = 299
+Answer: 299
+
+Step 1: 13 * 14 = 182
+Step 2: 4 + 182 = 186
+Answer: 186
+
+Step 1: 7 * 15 = 105
+Step 2: 10 * 7 = 70
+Step 3: 105 + 70 = 175
+Step 4: 175 + 4 = 179
+Answer: 179
+
+Step 1: 12 - 9 = 3
+Answer: 3
+
+Step 1: 13 * 9 = 117
+Step 2: 19 * 20 = 380
+Step 3: 117 + 380 = 497
+Step 4: 497 - 1 = 496
+Answer: 496
+
+Step 1: 15 * 9 = 135
+Answer: 135
+
+Step 1: 10 * 1 = 10
+Step 2: 1 + 10 = 11
+Answer: 11
+
+Step 1: 17 * 7 = 119
+Step 2: 119 * 20 = 2380
+Step 3: 2380 + 3 = 2383
+Step 4: 2383 + 3 = 2386
+Answer: 2386
+
+Step 1: 4 + 13 = 17
+Step 2: 17 + 15 = 32
+Step 3: 32 - 9 = 23
+Step 4: 23 + 8 = 31
+Answer: 31
+
+Step 1: 2 - 2 = 0
+Answer: 0
+
+Step 1: 9 - 16 = -7
+Step 2: -7 + 5 = -2
+Answer: -2
+
+Step 1: 1 / 1 = 1
+Step 2: 16 - 20 = -4
+Step 3: -4 - 4 = -8
+Step 4: -8 + 1 = -7
+Answer: -7
+
+Step 1: 7 * 9 = 63
+Step 2: 63 * 9 = 567
+Step 3: 8 - 5 = 3
+Step 4: 3 - 567 = -564
+Answer: -564
+
+Step 1: 20 * 1 = 20
+Step 2: 20 * 18 = 360
+Step 3: 360 / 10 = 36
+Answer: 36
+
+Step 1: 4 + 10 = 14
+Step 2: 14 - 19 = -5
+Answer: -5
+
+Step 1: 20 + 12 = 32
+Answer: 32
+
+Step 1: 9 * 1 = 9
+Step 2: 5 * 14 = 70
+Step 3: 9 + 16 = 25
+Step 4: 25 + 70 = 95
+Answer: 95
+
+Step 1: 19 - 11 = 8
+Step 2: 8 + 16 = 24
+Step 3: 24 + 10 = 34
+Step 4: 34 + 9 = 43
+Answer: 43
+
+Step 1: 13 * 6 = 78
+Step 2: 16 * 1 = 16
+Step 3: 78 + 16 = 94
+Answer: 94
+
+Step 1: 2 * 13 = 26
+Step 2: 9 + 12 = 21
+Step 3: 21 - 26 = -5
+Step 4: -5 + 20 = 15
+Answer: 15
+
+Step 1: 20 + 6 = 26
+Step 2: 26 + 4 = 30
+Step 3: 30 + 18 = 48
+Answer: 48
+
+Step 1: 9 * 16 = 144
+Step 2: 8 - 144 = -136
+Step 3: -136 - 4 = -140
+Answer: -140
+
+Step 1: 10 + 3 = 13
+Answer: 13
+
+Step 1: 3 - 8 = -5
+Step 2: -5 + 10 = 5
+Answer: 5
+
+Step 1: 4 * 2 = 8
+Step 2: 8 - 3 = 5
+Step 3: 5 - 5 = 0
+Step 4: 0 + 8 = 8
+Answer: 8
+
+Step 1: 1 * 19 = 19
+Step 2: 19 + 2 = 21
+Step 3: 21 - 19 = 2
+Step 4: 2 - 20 = -18
+Answer: -18
+
+Step 1: 20 + 17 = 37
+Step 2: 37 + 14 = 51
+Step 3: 51 - 7 = 44
+Answer: 44
+
+Step 1: 14 / 14 = 1
+Step 2: 12 * 3 = 36
+Step 3: 1 + 36 = 37
+Answer: 37
+
+Step 1: 2 * 10 = 20
+Step 2: 1 + 20 = 21
+Step 3: 21 + 9 = 30
+Answer: 30
+
+Step 1: 8 * 1 = 8
+Step 2: 8 * 12 = 96
+Step 3: 5 - 5 = 0
+Step 4: 0 - 96 = -96
+Answer: -96
+
+Step 1: 12 * 15 = 180
+Step 2: 17 - 180 = -163
+Answer: -163
+
+Step 1: 6 * 11 = 66
+Answer: 66
+
+Step 1: 6 + 5 = 11
+Step 2: 11 + 18 = 29
+Step 3: 29 - 7 = 22
+Answer: 22
+
+Step 1: 10 / 2 = 5
+Step 2: 18 * 3 = 54
+Step 3: 14 + 5 = 19
+Step 4: 19 - 54 = -35
+Answer: -35
+
+Step 1: 6 + 12 = 18
+Answer: 18
+
+Step 1: 10 * 12 = 120
+Step 2: 12 * 17 = 204
+Step 3: 120 - 204 = -84
+Step 4: -84 + 8 = -76
+Answer: -76
+
+Step 1: 3 * 4 = 12
+Step 2: 12 * 3 = 36
+Step 3: 36 * 4 = 144
+Step 4: 144 / 8 = 18
+Answer: 18
+
+Step 1: 18 * 18 = 324
+Step 2: 324 + 10 = 334
+Step 3: 334 + 5 = 339
+Answer: 339
+
+Step 1: 6 * 12 = 72
+Step 2: 4 - 17 = -13
+Step 3: -13 - 11 = -24
+Step 4: -24 - 72 = -96
+Answer: -96
+
+Step 1: 16 / 8 = 2
+Step 2: 2 - 2 = 0
+Answer: 0
+
+Step 1: 5 - 5 = 0
+Answer: 0
+
+Step 1: 20 + 19 = 39
+Answer: 39
+
+Step 1: 12 - 18 = -6
+Step 2: -6 - 11 = -17
+Answer: -17
+
+Step 1: 14 * 15 = 210
+Step 2: 210 + 13 = 223
+Step 3: 223 - 9 = 214
+Answer: 214
+
+Step 1: 12 * 14 = 168
+Step 2: 8 + 4 = 12
+Step 3: 12 - 3 = 9
+Step 4: 9 - 168 = -159
+Answer: -159
+
+Step 1: 13 + 19 = 32
+Step 2: 32 - 12 = 20
+Step 3: 20 + 19 = 39
+Answer: 39
+
+Step 1: 8 * 10 = 80
+Step 2: 6 + 80 = 86
+Step 3: 86 - 10 = 76
+Answer: 76
+
+Step 1: 19 * 18 = 342
+Step 2: 5 * 18 = 90
+Step 3: 342 + 90 = 432
+Answer: 432
+
+Step 1: 1 * 9 = 9
+Step 2: 2 - 9 = -7
+Step 3: -7 + 12 = 5
+Step 4: 5 + 19 = 24
+Answer: 24
+
+Step 1: 14 * 5 = 70
+Step 2: 2 + 70 = 72
+Answer: 72
+
+Step 1: 18 * 8 = 144
+Step 2: 144 / 2 = 72
+Step 3: 72 - 6 = 66
+Answer: 66
+
+Step 1: 10 + 2 = 12
+Answer: 12
+
+Step 1: 17 * 13 = 221
+Answer: 221
+
+Step 1: 20 * 12 = 240
+Answer: 240
+
+Step 1: 13 * 16 = 208
+Step 2: 208 * 7 = 1456
+Step 3: 1456 + 8 = 1464
+Answer: 1464
+
+Step 1: 1 - 16 = -15
+Answer: -15
+
+Step 1: 1 * 5 = 5
+Answer: 5
+
+Step 1: 1 - 20 = -19
+Answer: -19
+
+Step 1: 6 * 14 = 84
+Answer: 84
+
+Step 1: 7 * 4 = 28
+Step 2: 8 - 2 = 6
+Step 3: 6 + 28 = 34
+Step 4: 34 - 5 = 29
+Answer: 29
+
+Step 1: 10 * 8 = 80
+Step 2: 80 - 10 = 70
+Step 3: 70 + 3 = 73
+Answer: 73
+
+Step 1: 12 + 8 = 20
+Answer: 20
+
+Step 1: 5 / 1 = 5
+Answer: 5
+
+Step 1: 6 * 11 = 66
+Step 2: 18 / 18 = 1
+Step 3: 11 - 66 = -55
+Step 4: -55 + 1 = -54
+Answer: -54
+
+Step 1: 18 + 3 = 21
+Answer: 21
+
+Step 1: 15 * 20 = 300
+Step 2: 300 + 1 = 301
+Step 3: 301 + 2 = 303
+Step 4: 303 - 18 = 285
+Answer: 285
+
+Step 1: 16 - 18 = -2
+Answer: -2
+
+Step 1: 19 + 17 = 36
+Answer: 36
+
+Step 1: 7 * 15 = 105
+Step 2: 1 - 105 = -104
+Step 3: -104 - 5 = -109
+Step 4: -109 - 9 = -118
+Answer: -118
+
+Step 1: 13 * 8 = 104
+Step 2: 104 * 19 = 1976
+Step 3: 10 + 1976 = 1986
+Step 4: 1986 - 1 = 1985
+Answer: 1985
+
+Step 1: 12 / 4 = 3
+Answer: 3
+
+Step 1: 4 * 18 = 72
+Step 2: 72 + 18 = 90
+Step 3: 90 - 20 = 70
+Step 4: 70 - 8 = 62
+Answer: 62
+
+Step 1: 18 + 20 = 38
+Step 2: 38 - 10 = 28
+Answer: 28
+
+Step 1: 16 * 18 = 288
+Step 2: 8 + 288 = 296
+Step 3: 296 - 13 = 283
+Step 4: 283 + 7 = 290
+Answer: 290
+
+Step 1: 8 * 20 = 160
+Step 2: 160 * 9 = 1440
+Step 3: 17 + 13 = 30
+Step 4: 30 + 1440 = 1470
+Answer: 1470
+
+Step 1: 12 * 18 = 216
+Step 2: 4 - 216 = -212
+Answer: -212
+
+Step 1: 6 * 18 = 108
+Answer: 108
+
+Step 1: 16 / 4 = 4
+Step 2: 20 + 5 = 25
+Step 3: 25 + 4 = 29
+Answer: 29
+
+Step 1: 17 - 12 = 5
+Step 2: 5 - 15 = -10
+Answer: -10
+
+Step 1: 1 + 2 = 3
+Answer: 3
+
+Step 1: 6 * 14 = 84
+Step 2: 84 * 10 = 840
+Step 3: 840 + 10 = 850
+Answer: 850
+
+Step 1: 9 * 20 = 180
+Step 2: 20 + 13 = 33
+Step 3: 33 - 10 = 23
+Step 4: 23 - 180 = -157
+Answer: -157
+
+Step 1: 9 * 13 = 117
+Step 2: 117 + 16 = 133
+Answer: 133
+
+Step 1: 1 - 10 = -9
+Answer: -9
+
+Step 1: 13 / 13 = 1
+Step 2: 1 - 2 = -1
+Answer: -1
+
+Step 1: 5 - 4 = 1
+Step 2: 1 + 11 = 12
+Step 3: 12 - 1 = 11
+Answer: 11
+
+Step 1: 16 * 12 = 192
+Step 2: 14 - 192 = -178
+Answer: -178
+
+Step 1: 8 + 4 = 12
+Step 2: 12 + 8 = 20
+Answer: 20
+
+Step 1: 16 * 4 = 64
+Answer: 64
+
+Step 1: 14 - 16 = -2
+Step 2: -2 - 12 = -14
+Step 3: -14 + 5 = -9
+Step 4: -9 - 15 = -24
+Answer: -24
+
+Step 1: 9 + 10 = 19
+Answer: 19
+
+Step 1: 1 * 1 = 1
+Step 2: 1 - 1 = 0
+Answer: 0
+
+Step 1: 3 - 8 = -5
+Answer: -5
+
+Step 1: 15 * 16 = 240
+Step 2: 7 + 20 = 27
+Step 3: 27 + 240 = 267
+Answer: 267
+
+Step 1: 20 * 4 = 80
+Step 2: 4 * 12 = 48
+Step 3: 80 + 48 = 128
+Answer: 128
+
+Step 1: 3 * 12 = 36
+Answer: 36
+
+Step 1: 5 * 7 = 35
+Answer: 35
+
+Step 1: 19 * 12 = 228
+Step 2: 2 - 228 = -226
+Answer: -226
+
+Step 1: 17 - 17 = 0
+Answer: 0
+
+Step 1: 10 - 20 = -10
+Answer: -10
+
+Step 1: 16 * 12 = 192
+Answer: 192
+
+Step 1: 16 * 10 = 160
+Step 2: 160 + 3 = 163
+Step 3: 163 - 10 = 153
+Answer: 153
+
+Step 1: 15 * 14 = 210
+Step 2: 7 * 20 = 140
+Step 3: 210 - 14 = 196
+Step 4: 196 + 140 = 336
+Answer: 336
+
+Step 1: 10 * 2 = 20
+Step 2: 7 / 1 = 7
+Step 3: 20 - 7 = 13
+Step 4: 13 - 18 = -5
+Answer: -5
+
+Step 1: 7 + 17 = 24
+Answer: 24
+
+Step 1: 6 - 14 = -8
+Answer: -8
+
+Step 1: 11 + 19 = 30
+Step 2: 30 + 2 = 32
+Answer: 32
+
+Step 1: 12 * 14 = 168
+Step 2: 168 - 10 = 158
+Step 3: 158 + 20 = 178
+Answer: 178
+
+Step 1: 13 * 7 = 91
+Step 2: 91 * 11 = 1001
+Step 3: 13 - 4 = 9
+Step 4: 9 - 1001 = -992
+Answer: -992
+
+Step 1: 9 / 3 = 3
+Step 2: 14 - 3 = 11
+Answer: 11
+
+Step 1: 9 + 17 = 26
+Answer: 26
+
+Step 1: 19 - 14 = 5
+Answer: 5
+
+Step 1: 7 * 10 = 70
+Step 2: 5 * 19 = 95
+Step 3: 70 + 5 = 75
+Step 4: 75 + 95 = 170
+Answer: 170
+
+Step 1: 12 - 2 = 10
+Step 2: 10 - 9 = 1
+Step 3: 1 - 16 = -15
+Answer: -15
+
+Step 1: 9 + 14 = 23
+Answer: 23
+
+Step 1: 10 * 15 = 150
+Step 2: 20 - 150 = -130
+Step 3: -130 + 16 = -114
+Answer: -114
+
+Step 1: 17 * 19 = 323
+Answer: 323
+
+Step 1: 16 * 5 = 80
+Step 2: 20 - 80 = -60
+Answer: -60
+
+Step 1: 5 + 13 = 18
+Answer: 18
+
+Step 1: 8 / 1 = 8
+Step 2: 8 / 8 = 1
+Step 3: 1 - 18 = -17
+Step 4: -17 + 10 = -7
+Answer: -7
+
+Step 1: 14 / 1 = 14
+Step 2: 4 + 15 = 19
+Step 3: 19 - 14 = 5
+Step 4: 5 + 9 = 14
+Answer: 14
+
+Step 1: 6 * 19 = 114
+Step 2: 114 * 1 = 114
+Answer: 114
+
+Step 1: 13 * 3 = 39
+Step 2: 39 / 3 = 13
+Step 3: 13 * 12 = 156
+Answer: 156
+
+Step 1: 18 * 6 = 108
+Step 2: 14 + 108 = 122
+Answer: 122
+
+Step 1: 16 + 7 = 23
+Answer: 23
+
+Step 1: 11 + 5 = 16
+Answer: 16
+
+Step 1: 3 * 11 = 33
+Step 2: 33 + 15 = 48
+Step 3: 48 - 3 = 45
+Answer: 45
+
+Step 1: 4 + 2 = 6
+Answer: 6
+
+Step 1: 1 * 13 = 13
+Step 2: 13 * 5 = 65
+Step 3: 65 * 10 = 650
+Answer: 650
+
+Step 1: 4 * 16 = 64
+Answer: 64
+
+Step 1: 8 * 7 = 56
+Step 2: 11 * 16 = 176
+Step 3: 56 + 2 = 58
+Step 4: 58 - 176 = -118
+Answer: -118
+
+Step 1: 9 + 3 = 12
+Step 2: 12 + 11 = 23
+Step 3: 23 + 18 = 41
+Answer: 41
+
+Step 1: 2 * 17 = 34
+Step 2: 34 * 9 = 306
+Answer: 306
+
+Step 1: 12 / 6 = 2
+Step 2: 2 * 6 = 12
+Step 3: 15 + 12 = 27
+Step 4: 27 + 11 = 38
+Answer: 38
+
+Step 1: 14 * 10 = 140
+Answer: 140
+
+Step 1: 10 * 4 = 40
+Step 2: 2 + 20 = 22
+Step 3: 22 + 40 = 62
+Step 4: 62 - 8 = 54
+Answer: 54
+
+Step 1: 10 + 19 = 29
+Step 2: 29 + 12 = 41
+Step 3: 41 - 20 = 21
+Step 4: 21 + 19 = 40
+Answer: 40
+
+Step 1: 11 + 9 = 20
+Step 2: 20 + 3 = 23
+Step 3: 23 + 19 = 42
+Answer: 42
+
+Step 1: 3 - 18 = -15
+Step 2: -15 - 4 = -19
+Answer: -19
+
+Step 1: 18 / 18 = 1
+Step 2: 1 * 9 = 9
+Step 3: 13 * 3 = 39
+Step 4: 9 - 39 = -30
+Answer: -30
+
+Step 1: 14 * 1 = 14
+Step 2: 4 + 14 = 18
+Step 3: 18 + 14 = 32
+Step 4: 32 + 19 = 51
+Answer: 51
+
+Step 1: 19 * 13 = 247
+Step 2: 247 - 7 = 240
+Answer: 240
+
+Step 1: 7 - 18 = -11
+Step 2: -11 + 2 = -9
+Step 3: -9 + 7 = -2
+Answer: -2
+
+Step 1: 17 * 6 = 102
+Step 2: 12 + 102 = 114
+Answer: 114
+
+Step 1: 2 - 12 = -10
+Step 2: -10 + 19 = 9
+Step 3: 9 - 4 = 5
+Answer: 5
+
+Step 1: 12 - 14 = -2
+Step 2: -2 - 6 = -8
+Answer: -8
+
+Step 1: 9 * 16 = 144
+Step 2: 144 * 19 = 2736
+Step 3: 2736 + 3 = 2739
+Step 4: 2739 + 19 = 2758
+Answer: 2758
+
+Step 1: 17 * 14 = 238
+Step 2: 5 / 5 = 1
+Step 3: 238 + 12 = 250
+Step 4: 250 - 1 = 249
+Answer: 249
+
+Step 1: 3 * 16 = 48
+Step 2: 48 * 18 = 864
+Step 3: 17 + 864 = 881
+Step 4: 881 + 18 = 899
+Answer: 899
+
+Step 1: 1 - 10 = -9
+Step 2: -9 - 17 = -26
+Step 3: -26 + 8 = -18
+Answer: -18
+
+Step 1: 14 * 20 = 280
+Step 2: 280 * 7 = 1960
+Step 3: 1960 + 14 = 1974
+Step 4: 1974 - 17 = 1957
+Answer: 1957
+
+Step 1: 18 + 16 = 34
+Step 2: 34 + 20 = 54
+Answer: 54
+
+Step 1: 16 * 20 = 320
+Step 2: 17 + 16 = 33
+Step 3: 33 - 14 = 19
+Step 4: 19 - 320 = -301
+Answer: -301
+
+Step 1: 8 * 20 = 160
+Step 2: 14 + 9 = 23
+Step 3: 23 + 14 = 37
+Step 4: 37 + 160 = 197
+Answer: 197
+
+Step 1: 7 + 10 = 17
+Step 2: 17 + 10 = 27
+Step 3: 27 - 8 = 19
+Answer: 19
+
+Step 1: 18 * 10 = 180
+Step 2: 180 / 20 = 9
+Step 3: 9 - 16 = -7
+Answer: -7
+
+Step 1: 20 * 18 = 360
+Step 2: 4 + 9 = 13
+Step 3: 13 - 360 = -347
+Step 4: -347 + 5 = -342
+Answer: -342
+
+Step 1: 4 * 16 = 64
+Step 2: 64 * 19 = 1216
+Step 3: 1216 - 14 = 1202
+Answer: 1202
+
+Step 1: 12 * 17 = 204
+Step 2: 8 - 204 = -196
+Answer: -196
+
+Step 1: 8 + 2 = 10
+Step 2: 10 - 5 = 5
+Step 3: 5 + 9 = 14
+Step 4: 14 + 18 = 32
+Answer: 32
+
+Step 1: 13 * 9 = 117
+Step 2: 4 + 3 = 7
+Step 3: 7 - 117 = -110
+Step 4: -110 - 1 = -111
+Answer: -111
+
+Step 1: 16 * 15 = 240
+Step 2: 18 / 9 = 2
+Step 3: 240 + 15 = 255
+Step 4: 255 + 2 = 257
+Answer: 257
+
+Step 1: 2 + 17 = 19
+Answer: 19
+
+Step 1: 5 * 14 = 70
+Step 2: 70 - 5 = 65
+Answer: 65
+
+Step 1: 19 / 1 = 19
+Answer: 19
+
+Step 1: 11 - 10 = 1
+Step 2: 1 + 12 = 13
+Answer: 13
+
+Step 1: 12 * 10 = 120
+Step 2: 4 * 5 = 20
+Step 3: 120 + 20 = 140
+Answer: 140
+
+Step 1: 19 + 13 = 32
+Answer: 32
+
+Step 1: 20 * 8 = 160
+Step 2: 20 + 160 = 180
+Step 3: 180 + 19 = 199
+Answer: 199
+
+Step 1: 8 + 10 = 18
+Answer: 18
+
+Step 1: 11 * 14 = 154
+Step 2: 154 * 11 = 1694
+Step 3: 1694 + 1 = 1695
+Step 4: 1695 + 15 = 1710
+Answer: 1710
+
+Step 1: 2 / 2 = 1
+Step 2: 1 * 16 = 16
+Step 3: 16 - 4 = 12
+Step 4: 12 - 8 = 4
+Answer: 4
+
+Step 1: 1 + 7 = 8
+Answer: 8
+
+Step 1: 3 * 18 = 54
+Step 2: 5 + 15 = 20
+Step 3: 20 - 54 = -34
+Answer: -34
+
+Step 1: 12 * 7 = 84
+Step 2: 8 + 84 = 92
+Step 3: 92 + 18 = 110
+Answer: 110
+
+Step 1: 5 * 19 = 95
+Step 2: 17 + 95 = 112
+Step 3: 112 + 18 = 130
+Step 4: 130 - 17 = 113
+Answer: 113
+
+Step 1: 9 + 1 = 10
+Step 2: 10 - 14 = -4
+Step 3: -4 + 16 = 12
+Answer: 12
+
+Step 1: 3 * 19 = 57
+Step 2: 13 - 57 = -44
+Step 3: -44 - 13 = -57
+Answer: -57
+
+Step 1: 10 * 11 = 110
+Step 2: 13 - 15 = -2
+Step 3: -2 - 110 = -112
+Answer: -112
+
+Step 1: 11 * 1 = 11
+Step 2: 4 * 9 = 36
+Step 3: 1 + 11 = 12
+Step 4: 12 + 36 = 48
+Answer: 48
+
+Step 1: 7 * 9 = 63
+Step 2: 63 * 4 = 252
+Step 3: 7 - 252 = -245
+Step 4: -245 - 17 = -262
+Answer: -262
+
+Step 1: 9 * 8 = 72
+Step 2: 72 - 16 = 56
+Step 3: 56 + 8 = 64
+Step 4: 64 - 6 = 58
+Answer: 58
+
+Step 1: 19 * 5 = 95
+Step 2: 95 * 11 = 1045
+Step 3: 1045 + 17 = 1062
+Answer: 1062
+
+Step 1: 18 / 2 = 9
+Step 2: 19 - 17 = 2
+Step 3: 2 + 9 = 11
+Step 4: 11 + 4 = 15
+Answer: 15
+
+Step 1: 14 - 8 = 6
+Step 2: 6 + 20 = 26
+Answer: 26
+
+Step 1: 5 * 19 = 95
+Step 2: 95 / 1 = 95
+Step 3: 1 + 15 = 16
+Step 4: 16 - 95 = -79
+Answer: -79
+
+Step 1: 16 + 18 = 34
+Answer: 34
+
+Step 1: 14 * 4 = 56
+Step 2: 56 - 8 = 48
+Answer: 48
+
+Step 1: 16 / 1 = 16
+Step 2: 18 + 11 = 29
+Step 3: 29 - 16 = 13
+Step 4: 13 - 15 = -2
+Answer: -2
+
+Step 1: 14 * 19 = 266
+Step 2: 14 * 10 = 140
+Step 3: 266 - 13 = 253
+Step 4: 253 + 140 = 393
+Answer: 393
+
+Step 1: 13 * 6 = 78
+Step 2: 78 + 20 = 98
+Step 3: 98 - 14 = 84
+Answer: 84
+
+Step 1: 5 * 5 = 25
+Step 2: 16 + 25 = 41
+Answer: 41
+
+Step 1: 2 + 14 = 16
+Answer: 16
+
+Step 1: 3 + 10 = 13
+Step 2: 13 + 11 = 24
+Answer: 24
+
+Step 1: 11 - 5 = 6
+Answer: 6
+
+Step 1: 10 - 1 = 9
+Step 2: 9 + 9 = 18
+Answer: 18
+
+Step 1: 12 * 8 = 96
+Step 2: 96 * 12 = 1152
+Step 3: 5 - 1152 = -1147
+Step 4: -1147 - 8 = -1155
+Answer: -1155
+
+Step 1: 16 / 2 = 8
+Step 2: 8 * 20 = 160
+Step 3: 20 * 18 = 360
+Step 4: 160 - 360 = -200
+Answer: -200
+
+Step 1: 15 / 1 = 15
+Answer: 15
+
+Step 1: 16 * 10 = 160
+Answer: 160
+
+Step 1: 20 * 5 = 100
+Step 2: 100 * 7 = 700
+Step 3: 1 + 3 = 4
+Step 4: 4 - 700 = -696
+Answer: -696
+
+Step 1: 19 * 17 = 323
+Step 2: 323 * 20 = 6460
+Step 3: 2 - 16 = -14
+Step 4: -14 + 6460 = 6446
+Answer: 6446
+
+Step 1: 10 + 18 = 28
+Answer: 28
+
+Step 1: 4 * 18 = 72
+Step 2: 14 * 19 = 266
+Step 3: 72 - 266 = -194
+Answer: -194
+
+Step 1: 15 / 3 = 5
+Step 2: 4 + 5 = 9
+Answer: 9
+
+Step 1: 18 / 9 = 2
+Step 2: 2 - 18 = -16
+Answer: -16
+
+Step 1: 13 * 16 = 208
+Step 2: 208 * 17 = 3536
+Step 3: 2 - 3536 = -3534
+Answer: -3534
+
+Step 1: 8 * 17 = 136
+Step 2: 136 - 16 = 120
+Step 3: 120 + 18 = 138
+Answer: 138
+
+Step 1: 17 + 6 = 23
+Answer: 23
+
+Step 1: 13 + 1 = 14
+Step 2: 14 + 14 = 28
+Answer: 28
+
+Step 1: 8 / 1 = 8
+Answer: 8
+
+Step 1: 11 * 12 = 132
+Step 2: 132 / 12 = 11
+Step 3: 7 - 11 = -4
+Answer: -4
+
+Step 1: 6 - 3 = 3
+Answer: 3
+
+Step 1: 5 - 11 = -6
+Answer: -6
+
+Step 1: 12 / 6 = 2
+Step 2: 7 + 2 = 9
+Answer: 9
+
+Step 1: 11 * 16 = 176
+Step 2: 176 * 3 = 528
+Step 3: 6 * 15 = 90
+Step 4: 528 - 90 = 438
+Answer: 438
+
+Step 1: 15 * 13 = 195
+Step 2: 195 + 12 = 207
+Answer: 207
+
+Step 1: 7 * 1 = 7
+Step 2: 7 - 11 = -4
+Answer: -4
+
+Step 1: 2 + 6 = 8
+Answer: 8
+
+Step 1: 18 * 20 = 360
+Step 2: 360 * 10 = 3600
+Step 3: 3600 / 15 = 240
+Step 4: 12 - 240 = -228
+Answer: -228
+
+Step 1: 7 * 4 = 28
+Step 2: 18 - 28 = -10
+Step 3: -10 + 4 = -6
+Answer: -6
+
+Step 1: 16 * 3 = 48
+Step 2: 20 - 19 = 1
+Step 3: 1 + 48 = 49
+Answer: 49
+
+Step 1: 14 + 4 = 18
+Step 2: 18 + 13 = 31
+Step 3: 31 + 15 = 46
+Step 4: 46 + 17 = 63
+Answer: 63
+
+Step 1: 10 * 1 = 10
+Step 2: 10 * 4 = 40
+Step 3: 9 * 13 = 117
+Step 4: 40 + 117 = 157
+Answer: 157
+
+Step 1: 19 * 9 = 171
+Step 2: 171 + 2 = 173
+Step 3: 173 - 1 = 172
+Step 4: 172 - 10 = 162
+Answer: 162
+
+Step 1: 11 * 13 = 143
+Step 2: 6 + 16 = 22
+Step 3: 22 - 143 = -121
+Answer: -121
+
+Step 1: 4 / 4 = 1
+Answer: 1
+
+Step 1: 10 * 19 = 190
+Answer: 190
+
+Step 1: 19 * 10 = 190
+Step 2: 3 * 19 = 57
+Step 3: 190 + 57 = 247
+Step 4: 247 - 13 = 234
+Answer: 234
+
+Step 1: 20 - 12 = 8
+Step 2: 8 + 6 = 14
+Step 3: 14 - 4 = 10
+Answer: 10
+
+Step 1: 13 * 15 = 195
+Step 2: 195 + 17 = 212
+Answer: 212
+
+Step 1: 8 / 1 = 8
+Step 2: 7 - 3 = 4
+Step 3: 4 - 8 = -4
+Step 4: -4 + 1 = -3
+Answer: -3
+
+Step 1: 14 + 3 = 17
+Answer: 17
+
+Step 1: 8 / 8 = 1
+Step 2: 19 * 18 = 342
+Step 3: 1 + 14 = 15
+Step 4: 15 - 342 = -327
+Answer: -327
+
+Step 1: 10 * 1 = 10
+Step 2: 10 + 11 = 21
+Step 3: 21 - 6 = 15
+Answer: 15
+
+Step 1: 5 * 11 = 55
+Step 2: 55 * 13 = 715
+Step 3: 715 * 10 = 7150
+Step 4: 7150 + 16 = 7166
+Answer: 7166
+
+Step 1: 20 - 14 = 6
+Answer: 6
+
+Step 1: 7 * 1 = 7
+Step 2: 7 * 16 = 112
+Answer: 112
+
+Step 1: 15 * 1 = 15
+Step 2: 15 - 17 = -2
+Answer: -2
+
+Step 1: 16 * 18 = 288
+Step 2: 20 + 20 = 40
+Step 3: 40 + 288 = 328
+Step 4: 328 + 16 = 344
+Answer: 344
+
+Step 1: 18 * 15 = 270
+Step 2: 270 * 11 = 2970
+Answer: 2970
+
+Step 1: 17 + 20 = 37
+Step 2: 37 - 17 = 20
+Step 3: 20 + 3 = 23
+Answer: 23
+
+Step 1: 9 - 3 = 6
+Answer: 6
+
+Step 1: 16 * 4 = 64
+Step 2: 64 / 1 = 64
+Step 3: 64 / 16 = 4
+Answer: 4
+
+Step 1: 6 * 16 = 96
+Step 2: 17 - 96 = -79
+Step 3: -79 - 8 = -87
+Answer: -87
+
+Step 1: 4 * 18 = 72
+Step 2: 1 - 72 = -71
+Answer: -71
+
+Step 1: 10 * 17 = 170
+Step 2: 1 * 13 = 13
+Step 3: 170 - 13 = 157
+Answer: 157
+
+Step 1: 7 - 5 = 2
+Answer: 2
+
+Step 1: 3 * 11 = 33
+Step 2: 33 * 3 = 99
+Step 3: 99 + 16 = 115
+Step 4: 115 + 8 = 123
+Answer: 123
+
+Step 1: 14 * 19 = 266
+Step 2: 11 * 14 = 154
+Step 3: 266 + 154 = 420
+Step 4: 420 + 8 = 428
+Answer: 428
+
+Step 1: 16 * 11 = 176
+Step 2: 9 + 176 = 185
+Answer: 185
+
+Step 1: 3 * 1 = 3
+Step 2: 3 * 9 = 27
+Step 3: 5 + 27 = 32
+Answer: 32
+
+Step 1: 8 * 8 = 64
+Step 2: 11 - 64 = -53
+Step 3: -53 - 3 = -56
+Step 4: -56 - 11 = -67
+Answer: -67
+
+Step 1: 9 - 5 = 4
+Step 2: 4 - 8 = -4
+Step 3: -4 + 5 = 1
+Answer: 1
+
+Step 1: 12 * 12 = 144
+Answer: 144
+
+Step 1: 2 * 18 = 36
+Step 2: 36 / 4 = 9
+Step 3: 9 - 8 = 1
+Answer: 1
+
+Step 1: 18 - 18 = 0
+Answer: 0
+
+Step 1: 5 * 20 = 100
+Step 2: 17 - 5 = 12
+Step 3: 12 - 100 = -88
+Step 4: -88 + 18 = -70
+Answer: -70
+
+Step 1: 10 - 7 = 3
+Answer: 3
+
+Step 1: 19 * 1 = 19
+Step 2: 19 * 6 = 114
+Step 3: 2 - 7 = -5
+Step 4: -5 - 114 = -119
+Answer: -119
+
+Step 1: 6 * 9 = 54
+Step 2: 54 / 2 = 27
+Step 3: 7 - 27 = -20
+Answer: -20
+
+Step 1: 8 + 19 = 27
+Step 2: 27 + 12 = 39
+Answer: 39
+
+Step 1: 4 - 16 = -12
+Step 2: -12 + 6 = -6
+Step 3: -6 + 18 = 12
+Answer: 12
+
+Step 1: 16 + 1 = 17
+Step 2: 17 + 13 = 30
+Step 3: 30 - 19 = 11
+Step 4: 11 + 11 = 22
+Answer: 22
+
+Step 1: 18 + 16 = 34
+Step 2: 34 + 10 = 44
+Answer: 44
+
+Step 1: 5 * 8 = 40
+Step 2: 40 * 7 = 280
+Step 3: 280 * 15 = 4200
+Answer: 4200
+
+Step 1: 1 * 16 = 16
+Step 2: 11 - 16 = -5
+Step 3: -5 - 19 = -24
+Step 4: -24 + 3 = -21
+Answer: -21
+
+Step 1: 7 * 12 = 84
+Step 2: 20 * 5 = 100
+Step 3: 100 / 10 = 10
+Step 4: 84 - 10 = 74
+Answer: 74
+
+Step 1: 15 * 10 = 150
+Step 2: 1 * 6 = 6
+Step 3: 150 + 6 = 156
+Step 4: 156 - 2 = 154
+Answer: 154
+
+Step 1: 8 * 1 = 8
+Step 2: 3 * 2 = 6
+Step 3: 8 + 12 = 20
+Step 4: 20 - 6 = 14
+Answer: 14
+
+Step 1: 10 * 11 = 110
+Step 2: 110 + 20 = 130
+Step 3: 130 - 18 = 112
+Answer: 112
+
+Step 1: 14 - 5 = 9
+Step 2: 9 - 9 = 0
+Answer: 0
+
+Step 1: 16 * 4 = 64
+Step 2: 17 + 10 = 27
+Step 3: 27 + 64 = 91
+Step 4: 91 - 15 = 76
+Answer: 76
+
+Step 1: 7 + 12 = 19
+Step 2: 19 - 13 = 6
+Step 3: 6 + 20 = 26
+Step 4: 26 + 5 = 31
+Answer: 31
+
+Step 1: 2 * 10 = 20
+Step 2: 20 / 10 = 2
+Step 3: 15 - 2 = 13
+Answer: 13
+

@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from bitnet import BitLinear
+from mamba_lite import SelectiveTimeMixing
 from rwkv_model import TimeMixing
 
 
@@ -39,6 +40,40 @@ class GPTConfig:
     # periodic-attention design (uchi/README.md). Ignored if False (pure attention, unchanged).
     attention_layers: tuple = field(default_factory=tuple)  # 0-indexed layers that use attention
     # when use_rwkv_hybrid=True; all others use RWKV time-mixing.
+    tie_layers: bool = False  # Universal-Transformer/ALBERT-style: reuse ONE physical block's
+    # weights at every depth step instead of n_layer independent blocks -- tests whether "more
+    # effective passes through fewer parameter sets" beats "more independent layers" at a cut
+    # param budget (see tasks/ducky.md's architecture critique, ranked idea #2). Requires a
+    # homogeneous block type: a single shared block can't be RWKV at one depth and attention at
+    # another, so this is only valid with attention_layers=() (pure RWKV throughout, if
+    # use_rwkv_hybrid) or use_rwkv_hybrid=False (pure attention, unchanged either way).
+    use_halting: bool = False  # per-block halting head (Linear(d_model, 1), negligible params),
+    # trained via an auxiliary BCE loss predicting "does THIS layer's own logit-lens prediction
+    # already match the final-depth prediction" -- the same signal eval_early_exit.py's untrained
+    # probe checked empirically, now actually learned instead of borrowed (see
+    # tasks/ducky.md's architecture critique, ranked idea #1, and TinyGPT.halting_loss below).
+    use_selective_decay: bool = False  # mamba_lite.py's SelectiveTimeMixing instead of
+    # rwkv_model.py's TimeMixing for non-attention blocks when use_rwkv_hybrid=True -- input-
+    # dependent decay (Mamba/S6-style, Gu & Dao 2023) instead of RWKV's fixed per-channel decay,
+    # the actual mechanistic distinction from RWKV flagged in the architecture critique (ranked
+    # idea #3). Ignored unless use_rwkv_hybrid=True.
+    selective_decay_layers: tuple = field(default_factory=tuple)  # 0-indexed non-attention layers
+    # that use SelectiveTimeMixing specifically -- more precise than use_selective_decay's
+    # all-or-nothing (see tasks/ducky.md: uniform selective decay lost to plain RWKV on all 3
+    # domains in the scaling sweep; this tests restricting it to attention-adjacent layers only).
+    # Non-empty overrides use_selective_decay entirely; empty (default) falls back to that
+    # boolean's exact existing all-or-nothing behavior -- fully backward compatible.
+    use_width_gating: bool = False  # WidthGatedMLP instead of the plain dense MLP -- the
+    # width-axis analog of use_halting's depth-axis question: "how much of this block's FFN
+    # capacity does this token need," not "how many blocks." See WidthGatedMLP and
+    # TinyGPT.width_sparsity_loss below. Ignored when moe_experts > 0.
+    scaled_residual_init: bool = False  # GPT-2-paper residual-projection init (Radford et al.
+    # 2019; ported via nanoGPT): the last linear in each residual branch (attention's attn_out,
+    # dense/width-gated MLP's second projection) gets std=0.02/sqrt(2*n_layer) instead of the
+    # flat 0.02 everything else uses, to stop the residual stream's variance from growing with
+    # depth. Neither this file nor uchi's own flux/model.py had this until now -- part of
+    # --nanogpt-recipe in train.py, tested because every run so far conflated architecture
+    # results with an unexamined training-recipe gap (see tasks/todo.md).
 
 
 class Expert(nn.Module):
@@ -106,6 +141,39 @@ class MoEFFN(nn.Module):
         return out.reshape(B, T, C)
 
 
+class WidthGatedMLP(nn.Module):
+    """Confidence-gated width: the width-axis analog of a halting head's
+    depth-axis question. Same fc1/fc2 shape as the plain dense MLP
+    (Linear(d,4d) -> GELU -> Linear(4d,d)), but the SECOND HALF of the 4d
+    hidden activations gets scaled by a per-token gate g=sigmoid(Linear
+    (d_model,1)(x)) before the second projection -- the first half is
+    always fully active (guaranteed baseline capacity, same idea as
+    halting always running at least one block), the second half is used
+    only as much as the gate says a token needs. last_gate_mean is a
+    side-effect attribute set every forward() call (read by
+    TinyGPT.width_sparsity_loss, not threaded through Block.forward's
+    return signature -- same non-invasive pattern MoEFFN.last_aux_loss
+    already uses).
+    """
+
+    def __init__(self, d_model: int, use_bitlinear: bool = False):
+        super().__init__()
+        Linear = BitLinear if use_bitlinear else nn.Linear
+        self.d_model = d_model
+        self.fc1 = Linear(d_model, 4 * d_model)
+        self.fc2 = Linear(4 * d_model, d_model)
+        self.gate = nn.Linear(d_model, 1)
+        self.last_gate_mean = torch.tensor(0.0)
+
+    def forward(self, x):
+        h = F.gelu(self.fc1(x))
+        g = torch.sigmoid(self.gate(x))  # (B, T, 1) -- per-token width fraction for the second half
+        self.last_gate_mean = g.mean()
+        half = self.d_model * 2
+        h = torch.cat([h[..., :half], g * h[..., half:]], dim=-1)
+        return self.fc2(h)
+
+
 class Block(nn.Module):
     def __init__(self, cfg: GPTConfig, layer_idx: int = 0):
         super().__init__()
@@ -116,15 +184,30 @@ class Block(nn.Module):
             self.qkv = Linear(cfg.d_model, 3 * cfg.d_model)
             self.attn_out = Linear(cfg.d_model, cfg.d_model)
         else:
-            # RWKV time-mixing: gated linear recurrence, O(1) state per
-            # channel regardless of sequence length (see rwkv_model.py).
-            # Unlike the attention path above, this can carry state across
-            # chunks far longer than block_size -- that's the whole point.
-            self.time_mixing = TimeMixing(cfg.d_model, linear_cls=Linear)
+            # selective_decay_layers, if non-empty, specifies exactly which non-attention
+            # layers use SelectiveTimeMixing, overriding use_selective_decay's all-or-nothing;
+            # empty (default) falls back to that boolean's exact existing behavior.
+            if cfg.selective_decay_layers:
+                is_selective = layer_idx in cfg.selective_decay_layers
+            else:
+                is_selective = cfg.use_selective_decay
+            if is_selective:
+                # Selective (Mamba/S6-style, input-dependent decay) variant --
+                # see mamba_lite.py. Same O(1)-state recurrence mechanism as
+                # TimeMixing below, just a different (input-dependent) decay.
+                self.time_mixing = SelectiveTimeMixing(cfg.d_model, linear_cls=Linear)
+            else:
+                # RWKV time-mixing: gated linear recurrence, O(1) state per
+                # channel regardless of sequence length (see rwkv_model.py).
+                # Unlike the attention path above, this can carry state across
+                # chunks far longer than block_size -- that's the whole point.
+                self.time_mixing = TimeMixing(cfg.d_model, linear_cls=Linear)
         self.ln2 = nn.LayerNorm(cfg.d_model)
         self.is_moe = cfg.moe_experts > 0
         if self.is_moe:
             self.mlp = MoEFFN(cfg)
+        elif cfg.use_width_gating:
+            self.mlp = WidthGatedMLP(cfg.d_model, cfg.use_bitlinear)
         else:
             self.mlp = nn.Sequential(
                 Linear(cfg.d_model, 4 * cfg.d_model),
@@ -186,11 +269,28 @@ class TinyGPT(nn.Module):
         else:
             self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.pos_emb = nn.Embedding(cfg.block_size, cfg.d_model)
-        self.blocks = nn.ModuleList([Block(cfg, layer_idx=i) for i in range(cfg.n_layer)])
+        if cfg.tie_layers:
+            assert not (cfg.use_rwkv_hybrid and cfg.attention_layers), (
+                "tie_layers needs a homogeneous block type -- set attention_layers=() with "
+                "use_rwkv_hybrid, or leave use_rwkv_hybrid=False"
+            )
+            shared_block = Block(cfg, layer_idx=0)
+            # Same Python object referenced n_layer times, not n_layer independent instances:
+            # nn.Module.parameters() de-duplicates by tensor identity, so num_params() and the
+            # optimizer both see this block's weights once, not n_layer times, while
+            # hidden_states()'s existing per-index loop still runs it (and tracks a separate
+            # RWKV state, where applicable) at every depth step.
+            self.blocks = nn.ModuleList([shared_block for _ in range(cfg.n_layer)])
+        else:
+            self.blocks = nn.ModuleList([Block(cfg, layer_idx=i) for i in range(cfg.n_layer)])
         self.ln_f = nn.LayerNorm(cfg.d_model)
         if not self.use_factored_embedding:
             self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
             self.lm_head.weight = self.tok_emb.weight  # tied, standard practice
+
+        self.halt_heads = None
+        if cfg.use_halting:
+            self.halt_heads = nn.ModuleList([nn.Linear(cfg.d_model, 1) for _ in range(cfg.n_layer)])
 
         self.extra_heads = None
         if cfg.n_future > 1:
@@ -203,6 +303,16 @@ class TinyGPT(nn.Module):
             self.proj_head = nn.Linear(cfg.d_model, cfg.proj_dim)
 
         self.apply(self._init_weights)
+        if cfg.scaled_residual_init:
+            std = 0.02 / math.sqrt(2 * cfg.n_layer)
+            for name, p in self.named_parameters():
+                # attn_out (attention) and each block's final MLP projection
+                # (dense Sequential's index-2 Linear, or WidthGatedMLP/Expert's
+                # fc2) are the last linear in their residual branch -- the
+                # exact set the GPT-2 paper scales down. MoE experts skipped
+                # (architecture question, not this recipe test).
+                if name.endswith("attn_out.weight") or name.endswith("fc2.weight") or name.endswith("mlp.2.weight"):
+                    nn.init.normal_(p, mean=0.0, std=std)
 
     @staticmethod
     def _init_weights(m):
@@ -215,6 +325,21 @@ class TinyGPT(nn.Module):
 
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
+
+    def width_sparsity_loss(self) -> torch.Tensor:
+        """Mean confidence-gated width usage across all WidthGatedMLP blocks
+        -- read directly off each block's mlp.last_gate_mean (set as a
+        side effect during that block's own forward(), same pattern as
+        MoEFFN.last_aux_loss), not threaded through Block.forward's return
+        signature. Always safe to call: returns 0.0 if no block is
+        width-gated. train.py weights this by WIDTH_SPARSITY_WEIGHT -- the
+        only pressure pushing gates below 1.0, since the task loss alone
+        has no other reason to.
+        """
+        gates = [b.mlp.last_gate_mean for b in self.blocks if isinstance(b.mlp, WidthGatedMLP)]
+        if not gates:
+            return torch.tensor(0.0)
+        return torch.stack(gates).mean()
 
     def hidden_states(self, idx: torch.Tensor, rwkv_states=None):
         """(B, T) token ids -> ((B, T, d_model) final hidden states, summed
@@ -236,6 +361,62 @@ class TinyGPT(nn.Module):
             aux_loss = aux_loss + block_aux
             new_states.append(new_state)
         return self.ln_f(x), aux_loss, new_states
+
+    def hidden_states_all_layers(self, idx: torch.Tensor, rwkv_states=None):
+        """Same as hidden_states(), but also returns the raw (pre-ln_f) hidden
+        state after every block, not just the final one -- needed for the
+        halting mechanism (and matches what eval_early_exit.py's untrained
+        probe inspected manually; this is the trainable version of the same
+        instrumentation).
+        """
+        B, T = idx.shape
+        pos = torch.arange(T, device=idx.device)
+        tok_x = self.factored_emb.embed(idx) if self.use_factored_embedding else self.tok_emb(idx)
+        x = tok_x + self.pos_emb(pos)
+        aux_loss = torch.tensor(0.0, device=idx.device)
+        new_states = []
+        layer_hiddens = []
+        for i, block in enumerate(self.blocks):
+            state = rwkv_states[i] if rwkv_states is not None else None
+            x, block_aux, new_state = block(x, state)
+            aux_loss = aux_loss + block_aux
+            new_states.append(new_state)
+            layer_hiddens.append(x)
+        return layer_hiddens, self.ln_f(x), aux_loss, new_states
+
+    def halting_loss(self, layer_hiddens: list, final_logits: torch.Tensor) -> torch.Tensor:
+        """Trains each block's halt_head to predict whether THIS layer's own
+        logit-lens prediction (reusing the shared, already-trained ln_f +
+        output projection -- only the halt DECISION is being learned here,
+        not the projection) already matches the final-depth prediction.
+        final_logits should be detached by the caller: the target label is
+        an argmax, non-differentiable anyway, but this keeps the halting
+        loss from ever influencing the primary task-loss gradient path.
+        """
+        assert self.halt_heads is not None
+        final_pred = final_logits.argmax(dim=-1)  # (B, T)
+        project = self.factored_emb.project if self.use_factored_embedding else self.lm_head
+        total = torch.tensor(0.0, device=final_logits.device)
+        for i, x in enumerate(layer_hiddens[:-1]):  # last layer IS the final prediction, nothing to predict
+            probe_logits = project(self.ln_f(x))
+            target = (probe_logits.argmax(dim=-1) == final_pred).float()
+            halt_logit = self.halt_heads[i](x).squeeze(-1)  # (B, T)
+            total = total + F.binary_cross_entropy_with_logits(halt_logit, target)
+        return total / max(len(layer_hiddens) - 1, 1)
+
+    def forward_with_halting(self, idx: torch.Tensor):
+        """One forward pass returning the standard (logits, extra_logits,
+        aux_loss, new_states) plus the halting BCE loss -- avoids a second
+        pass through the block stack just to get per-layer hiddens. Only
+        meaningful when cfg.use_halting=True (halt_heads is not None).
+        """
+        layer_hiddens, h, aux_loss, new_states = self.hidden_states_all_layers(idx)
+        logits = self.factored_emb.project(h) if self.use_factored_embedding else self.lm_head(h)
+        halt_loss = self.halting_loss(layer_hiddens, logits.detach())
+        extra_logits = None
+        if self.extra_heads is not None:
+            extra_logits = [head(h) for head in self.extra_heads]
+        return logits, extra_logits, aux_loss, new_states, halt_loss
 
     def forward(self, idx: torch.Tensor, rwkv_states=None):
         """Returns (logits, extra_logits, aux_loss, new_rwkv_states).

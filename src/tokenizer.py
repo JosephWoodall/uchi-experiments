@@ -25,12 +25,21 @@ TOK_DIR = ROOT / "data" / "tokenizer"
 VOCAB_SIZE = 32768
 
 
-def _model_prefix(vocab_size: int) -> Path:
-    return TOK_DIR / f"spm_{vocab_size}"
+def _model_prefix(vocab_size: int, variant: str = "") -> Path:
+    suffix = f"_{variant}" if variant else ""
+    return TOK_DIR / f"spm_{vocab_size}{suffix}"
 
 
-def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
-    model_prefix = _model_prefix(vocab_size)
+def train_if_missing(vocab_size: int = VOCAB_SIZE, variant: str = "") -> Path:
+    """variant is additive-only versioning, distinct from vocab_size: two
+    tokenizers can share a vocab_size but differ in training-data recipe
+    (e.g. the naive vs. "balanced"/resampled multi-domain mix -- see
+    tasks/ducky.md's tokenizer-fairness section) without silently
+    colliding on the same file. Default variant="" reproduces today's
+    exact filename (spm_{vocab_size}.model) -- zero behavior change for
+    every existing caller.
+    """
+    model_prefix = _model_prefix(vocab_size, variant)
     model_path = model_prefix.with_suffix(".model")
     if model_path.exists():
         return model_path
@@ -42,7 +51,7 @@ def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
     gutenberg = gutenberg_path.read_text() if gutenberg_path.exists() else ""
     chat_path = ROOT / "data" / "text" / "chat_corpus.txt"
     chat = chat_path.read_text() if chat_path.exists() else ""
-    combined_path = TOK_DIR / f"_combined_{vocab_size}.txt"
+    combined_path = TOK_DIR / f"_combined_{model_prefix.name}.txt"
     combined_path.write_text(rj + "\n" + gutenberg + "\n" + chat + "\n" + code)
 
     spm.SentencePieceTrainer.train(
@@ -68,8 +77,28 @@ def train_if_missing(vocab_size: int = VOCAB_SIZE) -> Path:
 
 
 class Tokenizer:
-    def __init__(self, vocab_size: int = VOCAB_SIZE):
-        model_path = train_if_missing(vocab_size)
+    def __init__(self, vocab_size: int = VOCAB_SIZE, variant: str = "", model_path: Path = None):
+        """model_path, if given, bypasses train_if_missing's vocab_size/
+        variant filename convention entirely and loads that exact file --
+        needed for the original, pre-versioning tokenizer (data/tokenizer/
+        spm.model), which predates the spm_{vocab_size}[_variant].model
+        naming scheme and can't be addressed by it. See ducky.py's
+        DEFAULT_RUNS loading for the one real caller of this (checkpoints
+        that predate vocab_size being recorded in config.json at all).
+        """
+        if model_path is not None:
+            model_path = Path(model_path)
+            # Distinct from str(vocab_size) on purpose: data.py's tokenize
+            # cache is keyed by this, and a model_path override (e.g. the
+            # legacy spm.model) can share a vocab_size with a DIFFERENT
+            # tokenizer file (spm_1024.model) that has different token-ID
+            # mappings -- caching both under "1024" would silently reuse
+            # the wrong one's tokenized corpus, the exact bug this whole
+            # override exists to avoid. See ducky.py's DEFAULT_RUNS loading.
+            self.cache_key = model_path.stem
+        else:
+            model_path = train_if_missing(vocab_size, variant)
+            self.cache_key = f"{vocab_size}_{variant}" if variant else str(vocab_size)
         self.sp = spm.SentencePieceProcessor(model_file=str(model_path))
 
     @property

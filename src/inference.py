@@ -25,7 +25,11 @@ import torch.nn.functional as F
 
 from grounding import (
     check_call_arity_consistency,
+    evaluate_arithmetic,
+    executes_without_error,
+    find_arithmetic_expression,
     identifier_grounded,
+    is_complete_statement,
     ngram_grounded,
     self_critique_score,
     verify_code_syntax,
@@ -282,7 +286,8 @@ def predict_next(model, graph, idx: torch.Tensor, fast_threshold: float = DEFAUL
 
 def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int, domain: str,
                              fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
-                             symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4):
+                             symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4,
+                             stop_when_complete: bool = True):
     """Sequence-level wrapper: predict_next per token (stopping early on
     ABSTAIN -- the model doesn't know what comes next, so don't guess past
     that point), then post-hoc verification on the completed span. Syntax
@@ -291,11 +296,20 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
     for a single token) -- n-gram grounding is the one signal granular
     enough to fold into predict_next's own per-token decision, done there
     instead of here.
+
+    stop_when_complete (code domain only, via grounding.is_complete_statement):
+    stop as soon as the completion looks like a finished statement (parses
+    + a blank line just emitted) instead of always spending the full
+    max_new_tokens budget -- motivated directly by generations that were
+    otherwise observed drifting past a function's natural end into an
+    unrelated new `def`. Checked after ABSTAIN so an abstention is never
+    masked by a stale "already complete" read from a prior token.
     """
     ids = torch.tensor([tok.encode(prompt)], dtype=torch.long)
     prompt_len = ids.size(1)
     generated = []
     abstained_at = None
+    stopped_complete = False
     # Fresh per call, discarded when this returns -- session-scoped, not
     # persisted (see session_memory.py). Seeding it with the prompt's own
     # tokens would double-count the prompt as "already generated"; it
@@ -311,16 +325,22 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
             break
         generated.append(next_id)
         ids = torch.cat([ids, torch.tensor([[next_id]])], dim=1)
+        if domain == "code" and stop_when_complete and is_complete_statement(prompt, tok.decode(generated)):
+            stopped_complete = True
+            break
 
     text = tok.decode(generated) if generated else ""
     result = {"prompt": prompt, "generated_text": text, "n_tokens_generated": len(generated),
-              "abstained_at_token": abstained_at}
+              "abstained_at_token": abstained_at, "stopped_complete": stopped_complete}
 
     if generated:
         result["self_critique_score"] = self_critique_score(model, ids[:, :prompt_len], generated)
         if domain == "code":
             full_text = prompt + text
             result["syntax_valid"] = verify_code_syntax(full_text)
+            executes = executes_without_error(full_text)
+            if executes is not None:
+                result["executes"] = executes
             if symbol_table is not None:
                 result["identifier_grounded"] = identifier_grounded(full_text, symbol_table)
             arity_check = check_call_arity_consistency(full_text)
@@ -330,6 +350,101 @@ def generate_with_grounding(model, tok, graph, prompt: str, max_new_tokens: int,
                     result["arity_conflicts"] = arity_check["conflicts"]
 
     return result
+
+
+def _maybe_splice_arithmetic(tok, ids: torch.Tensor, generated: list):
+    """Checks the tail of the full running context (prompt + generated so
+    far -- an expression can span that boundary or sit entirely within
+    either side) for a just-completed arithmetic expression right before
+    an '='. If found and evaluable, appends the real computed value's
+    tokens to *generated* and returns (new_ids, splice_record); returns
+    (ids, None) unchanged otherwise. Pulled out of
+    generate_with_calculator's loop so it's directly unit-testable against
+    a hand-built context, independent of whatever a real model predicts.
+    """
+    tail_text = tok.decode(ids[0, -40:].tolist())
+    expr = find_arithmetic_expression(tail_text)
+    if expr is None:
+        return ids, None
+    real_value = evaluate_arithmetic(expr)
+    if real_value is None:
+        return ids, None  # detected an "expr =" shape the evaluator still won't trust -- leave it to the model
+
+    value_str = str(int(real_value)) if float(real_value).is_integer() else str(round(real_value, 6))
+    splice_ids = tok.encode(f" {value_str}")
+    generated.extend(splice_ids)
+    new_ids = torch.cat([ids, torch.tensor([splice_ids])], dim=1)
+    splice_verified = value_str in tok.decode(splice_ids).strip()
+    return new_ids, {"expr": expr, "real_value": real_value, "splice_verified": splice_verified}
+
+
+def generate_with_calculator(model, tok, graph, prompt: str, max_new_tokens: int,
+                              fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
+                              ngram_index: set = None, ngram_n: int = 4, no_repeat_ngram_size: int = 4):
+    """Same token-by-token loop as generate_with_grounding (predict_next,
+    SessionTrie, no-repeat-ngram blocking -- no duplicated logic), but with
+    one addition: every time generation completes a literal arithmetic
+    expression right before an '=' (grounding.find_arithmetic_expression),
+    the model's own digit prediction for the result is skipped entirely --
+    the real value is computed (grounding.evaluate_arithmetic) and its
+    tokens are spliced in directly, bypassing predict_next for that span.
+    The neural net keeps mimicking the reasoning *shape* (which operation,
+    in what order); it never gets to guess the digits of a result.
+
+    Each splice records model_would_have_generated (a peek predict_next
+    call at the same position, never used to make any decision -- purely
+    for an honest before/after comparison) and splice_verified: whether
+    re-decoding the spliced tokens actually reads back as the intended
+    value. Named risk (not assumed away): encoding a value string out of
+    context can hit a BPE token-boundary mismatch versus how the model
+    would tokenize the same text with full left-context -- this is the
+    real check for that, not a guarantee.
+    """
+    ids = torch.tensor([tok.encode(prompt)], dtype=torch.long)
+    generated = []
+    abstained_at = None
+    splices = []
+    session_memory = SessionTrie()
+
+    # Real gap found empirically (bench_arithmetic.py): if *prompt* itself
+    # already ends in "expr =" (e.g. a caller directly asks "47 * 89 ="),
+    # waiting for the in-loop check below can miss it entirely -- BPE
+    # tokenization can fuse "=" together with the first digit of whatever
+    # the model generates next into a single token/step, so the
+    # intervention point (the moment right after "=" alone) is skipped
+    # over rather than landed on. One check against the raw prompt before
+    # any generation happens catches this case directly.
+    ids, splice = _maybe_splice_arithmetic(tok, ids, generated)
+    if splice is not None:
+        splice["model_would_have_generated"] = None  # nothing generated yet at this point to compare against
+        splices.append(splice)
+
+    while len(generated) < max_new_tokens:
+        next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
+                                      slow_abstain_threshold, ngram_index=ngram_index, ngram_n=ngram_n,
+                                      session_memory=session_memory, no_repeat_ngram_size=no_repeat_ngram_size)
+        if next_id == ABSTAIN:
+            abstained_at = len(generated)
+            break
+        generated.append(next_id)
+        ids = torch.cat([ids, torch.tensor([[next_id]])], dim=1)
+
+        new_ids, splice = _maybe_splice_arithmetic(tok, ids, generated)
+        if splice is not None:
+            # Peek at what the model would have predicted here instead --
+            # never used to make any decision, purely recorded for an
+            # honest before/after comparison. Uses the pre-splice `ids`
+            # (the exact position the real value's first token replaces),
+            # a fresh forward pass only paid for on an actual splice event.
+            peek_id, _ = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
+                                       slow_abstain_threshold, no_repeat_ngram_size=no_repeat_ngram_size)
+            splice["model_would_have_generated"] = tok.decode([peek_id]) if peek_id != ABSTAIN else None
+            splices.append(splice)
+        ids = new_ids
+
+    text = tok.decode(generated) if generated else ""
+    return {"prompt": prompt, "generated_text": text, "n_tokens_generated": len(generated),
+            "abstained_at_token": abstained_at, "splices": splices}
 
 
 def _score_candidate(result: dict, domain: str) -> float:

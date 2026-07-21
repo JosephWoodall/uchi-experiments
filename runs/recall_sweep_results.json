@@ -1,0 +1,63 @@
+{
+  "gap_sweep": [
+    {
+      "architecture": "pure_rwkv",
+      "gap": "short",
+      "L": 10,
+      "n_params": 39968,
+      "wall_s": 104.5,
+      "recall_accuracy": 0.1
+    },
+    {
+      "architecture": "pure_rwkv",
+      "gap": "long",
+      "L": 100,
+      "n_params": 45728,
+      "wall_s": 723.43,
+      "recall_accuracy": 0.085
+    },
+    {
+      "architecture": "hybrid",
+      "gap": "short",
+      "L": 10,
+      "n_params": 39936,
+      "wall_s": 14.2,
+      "recall_accuracy": 0.1
+    },
+    {
+      "architecture": "hybrid",
+      "gap": "long",
+      "L": 100,
+      "n_params": 45696,
+      "wall_s": 73.1,
+      "recall_accuracy": 0.085
+    }
+  ],
+  "cliff_characterization": [
+    {
+      "L": 0,
+      "recall_accuracy": 1.0
+    },
+    {
+      "L": 1,
+      "recall_accuracy": 1.0
+    },
+    {
+      "L": 2,
+      "recall_accuracy": 1.0
+    },
+    {
+      "L": 3,
+      "recall_accuracy": 0.13
+    },
+    {
+      "L": 5,
+      "recall_accuracy": 0.085
+    },
+    {
+      "L": 10,
+      "recall_accuracy": 0.1
+    }
+  ],
+  "l0_control_100pct_accuracy_confirmed": true
+}

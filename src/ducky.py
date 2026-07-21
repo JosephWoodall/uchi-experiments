@@ -20,6 +20,7 @@ import pickle
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 from data import load_lm_corpus
 from graph import TokenGraph, add_model_prediction_edges, build_ast_fact_edges, build_graph
@@ -43,34 +44,132 @@ SETUP_CACHE_DIR = ROOT / "data" / "cache" / "ducky_setup"
 # run the same SDK against either backbone and see the difference directly,
 # not just read about it in the results table.
 #
-# code/* and text/* point at the latest-generation checkpoints (vocab=32768,
-# xl depth, rank-64 embedding, ~30-100x expanded corpus per domain --
-# stdlib+curated site-packages for code, rj+1,255 Gutenberg texts+chat for
-# text). code: best val 3.4822 (was 5.1643 under the old 8192-vocab/smaller
-# corpus generation -- lower despite the harder, 4x bigger vocab, meaning
-# the data expansion more than offset it). text: best val 5.1040, and the
-# first checkpoint this whole project to produce genuinely coherent
-# English samples, not word-salad. rj/* still point at the old (vocab=1024)
-# generation, kept only for backward-compatible comparison -- "text" is
-# rj's real successor domain going forward. self.tok's vocab_size is read
-# per-checkpoint from config.json (falling back to 1024 for checkpoints
-# that predate that field), so all three generations load correctly side
-# by side.
+# code/hybrid and rj/hybrid now point at the best-validated EXPERIMENTAL
+# SETUP (architecture + training recipe), not the biggest/most-trained
+# checkpoint -- a deliberate choice (tasks/todo.md Phase X): production-
+# scale retrains are explicitly out of scope until the architecture is
+# more settled, so "best" here means "best combination of levers proven
+# at toy scale," not "best absolute quality." Both combine RWKV-hybrid
+# (the established best backbone) with --nanogpt-recipe --lr-schedule
+# plateau (betas/weight-decay-scope/scaled-init + adaptive LR, tasks/
+# todo.md Phase X -- the one clean, reproducible free win found this
+# session, bigger than most single architecture ablations). rj/hybrid
+# (rj_base_m_rwkv_lrplateau_nanogpt_seed57): best_val=3.5944, cleanly
+# early-stopped at step 600/1200 -- beats every prior rj reference point,
+# including the earlier hybrid-only result (4.351, no recipe fix) and
+# today's dense+recipe-only result (3.66), confirming the two levers
+# stack. code/hybrid (code_base_m_rwkv_rank32_tokbalanced_lrplateau_
+# nanogpt_seed57): best_val=4.5421 at step 4250/5000 -- extended from an
+# initial 2000-step run that stopped mid-descent at 5.4292; ran the full
+# 5000-step budget without plateau ever triggering a decay, so may still
+# have room left, but this is a real, substantially-converged number now.
+#
+# The much bigger, fully-converged xl-scale checkpoints from the pre-
+# recipe-fix generation (code_base_xl_rwkv_rank64: val 3.4822 on the real
+# ~43M-token corpus; text_base_xl_rwkv_rank64: val 5.1040, vocab=32768)
+# are NOT currently wired as defaults for that reason -- they're bigger
+# and better-trained in absolute terms, but were never retrained with the
+# validated recipe, and re-running them at that scale is exactly the
+# production commitment this phase is deliberately deferring. Still on
+# disk, still loadable via run_name=... below, not deleted.
 DEFAULT_RUNS = {
-    ("code", "hybrid"): "code_base_xl_rwkv_rank64",
+    ("code", "hybrid"): "code_base_m_rwkv_rank32_tokbalanced_lrplateau_nanogpt_seed57",
     ("code", "dense"): "code_base_xl_rank64",
     ("text", "hybrid"): "text_base_xl_rwkv_rank64",
     # ("text", "dense") not yet trained -- only the hybrid backbone has
     # been run on the text domain so far.
-    ("rj", "hybrid"): "rj_base_m",  # note: this checkpoint is hybrid despite the
-    # plain-looking name -- a relic of an earlier naming-collision bug (fixed for
-    # all runs since), see tasks/ducky.md
+    ("rj", "hybrid"): "rj_base_m_rwkv_lrplateau_nanogpt_seed57",
     ("rj", "dense"): "rj_base_m_seed1",
 }
 
 
+class EnsembleModel:
+    """Presents the identical model(idx) -> (logits, extra_logits, aux_loss,
+    new_states) call contract as TinyGPT, but internally averages softmax
+    PROBABILITIES across N member models first (eval_ensemble.py's already-
+    validated approach -- probability-averaging, not logit-averaging, is
+    the correct way to combine independently-calibrated models). Every
+    existing caller (predict_next, self_critique_score, calibrate_thresholds,
+    add_model_prediction_edges, and therefore generate_with_grounding/
+    mcts_generate/generate_with_repair, which all just pass `model` through)
+    works completely unchanged -- they only ever call model(idx) and read
+    model.cfg.block_size, never a TinyGPT-specific attribute beyond that.
+
+    extra_logits/new_states are not supported (returned as None) -- Ducky's
+    ask() path never uses mtp's extra heads or carries chunked RWKV state
+    across calls, so this doesn't lose anything the SDK actually exercises.
+    """
+
+    def __init__(self, models: list):
+        assert len(models) >= 2, "EnsembleModel needs at least 2 member models"
+        self.models = models
+        self.cfg = models[0].cfg
+
+    def eval(self):
+        for m in self.models:
+            m.eval()
+
+    def __call__(self, idx, rwkv_states=None):
+        probs = []
+        for m in self.models:
+            logits, _, _, _ = m(idx, rwkv_states)
+            probs.append(F.softmax(logits, dim=-1))
+        avg_probs = torch.stack(probs).mean(dim=0)
+        pseudo_logits = torch.log(avg_probs + 1e-12)  # so downstream softmax reproduces avg_probs exactly
+        return pseudo_logits, None, torch.tensor(0.0), None
+
+
 class Ducky:
+    @staticmethod
+    def _load_single_model(run_name: str):
+        """Returns (model, cfg_dict, tok, checkpoint_path) for one checkpoint
+        -- factored out so __init__ can call this once (single-model, the
+        original path, unchanged) or N times (ensemble_run_names, wrapped
+        in EnsembleModel below).
+        """
+        run_dir = ROOT / "runs" / run_name
+        checkpoint_path = run_dir / "model_best.pt"
+        cfg_dict = json.loads((run_dir / "config.json").read_text())
+        # vocab_size is only recorded in config.json from the 8192-vocab
+        # generation onward. Checkpoints predating that field (rj_base_m,
+        # rj_base_m_seed1 among DEFAULT_RUNS) were trained under vocab=1024
+        # against the ORIGINAL unversioned data/tokenizer/spm.model -- not
+        # today's spm_1024.model, which was itself retrained later (2026-
+        # 07-15 19:50) against a different corpus snapshot and has
+        # different token-ID meanings despite the same vocab size. Verified
+        # directly: loading rj_base_m against spm_1024.model gives val loss
+        # ~8.6 nats (worse than random); against the real original spm.model
+        # it reproduces the recorded 4.3746 (see tasks/ducky.md). Route
+        # these checkpoints to the preserved original file explicitly,
+        # rather than guessing vocab_size=1024 and hoping today's
+        # spm_1024.model still matches.
+        if "vocab_size" in cfg_dict:
+            # tokenizer_variant distinguishes same-vocab-size tokenizers trained on
+            # different recipes (e.g. "balanced" -- spm_32768_balanced.model -- vs.
+            # the default naive-concat spm_32768.model); missing this would silently
+            # load the wrong one for any checkpoint trained with --tokenizer-variant,
+            # the same class of bug already fixed once this session for the legacy
+            # pre-versioning case below.
+            tok = Tokenizer(vocab_size=cfg_dict["vocab_size"], variant=cfg_dict.get("tokenizer_variant", ""))
+        else:
+            tok = Tokenizer(model_path=ROOT / "data" / "tokenizer" / "spm.model")
+        size_cfg = SIZES[cfg_dict["size"]]
+        cfg = GPTConfig(
+            vocab_size=tok.vocab_size,
+            block_size=cfg_dict["block_size"],
+            use_rwkv_hybrid=cfg_dict.get("rwkv_hybrid", False),
+            attention_layers=tuple(cfg_dict.get("attention_layers", [])),
+            use_bitlinear=cfg_dict.get("use_bitlinear", False),
+            embedding_rank=cfg_dict.get("embedding_rank", 0),
+            **size_cfg,
+        )
+        model = TinyGPT(cfg)
+        model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+        model.eval()
+        return model, cfg_dict, tok, checkpoint_path
+
     def __init__(self, domain: str = "code", backbone: str = "hybrid", run_name: str = None,
+                 ensemble_run_names: list = None,
                  max_new_tokens: int = 60, use_cache: bool = True, track_history: bool = False):
         if domain not in ("code", "rj", "text"):
             raise ValueError(f"domain must be 'code', 'rj', or 'text', got {domain!r}")
@@ -84,29 +183,30 @@ class Ducky:
         # independent one-off asks, where folding prior Q&A into every new
         # prompt would just be noise.
         self.history = SessionHistory() if track_history else None
-        run_name = run_name or DEFAULT_RUNS[(domain, backbone)]
-        run_dir = ROOT / "runs" / run_name
-        checkpoint_path = run_dir / "model_best.pt"
 
-        cfg_dict = json.loads((run_dir / "config.json").read_text())
-        # vocab_size is only recorded in config.json from the 8192-vocab
-        # generation onward -- checkpoints trained before that fix predate
-        # vocab versioning entirely and were all trained under vocab=1024,
-        # so that's the correct fallback, not the SDK's current default.
-        self.tok = Tokenizer(vocab_size=cfg_dict.get("vocab_size", 1024))
-        size_cfg = SIZES[cfg_dict["size"]]
-        cfg = GPTConfig(
-            vocab_size=self.tok.vocab_size,
-            block_size=cfg_dict["block_size"],
-            use_rwkv_hybrid=cfg_dict.get("rwkv_hybrid", False),
-            attention_layers=tuple(cfg_dict.get("attention_layers", [])),
-            use_bitlinear=cfg_dict.get("use_bitlinear", False),
-            embedding_rank=cfg_dict.get("embedding_rank", 0),
-            **size_cfg,
-        )
-        self.model = TinyGPT(cfg)
-        self.model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
-        self.model.eval()
+        if ensemble_run_names:
+            # eval_ensemble.py's validated approach (probability-averaging beats
+            # the best single seed on both domains tested) -- wrapped so every
+            # downstream mechanism (graph, thresholds, predict_next, mcts,
+            # repair) works completely unchanged against EnsembleModel's
+            # identical call contract. Assumes matched tokenizer/config across
+            # members (asserted below, not just hoped).
+            assert len(ensemble_run_names) >= 2, "ensemble_run_names needs at least 2 checkpoints"
+            loaded = [self._load_single_model(rn) for rn in ensemble_run_names]
+            members, cfg_dicts, toks, checkpoint_paths = zip(*loaded)
+            for cd in cfg_dicts[1:]:
+                assert cd["vocab_size"] == cfg_dicts[0]["vocab_size"] and cd.get("tokenizer_variant", "") == cfg_dicts[0].get("tokenizer_variant", ""), \
+                    "ensemble_run_names must all share the same tokenizer (vocab_size + variant)"
+            self.tok = toks[0]
+            cfg_dict = cfg_dicts[0]
+            self.model = EnsembleModel(list(members))
+            run_name = "+".join(ensemble_run_names)  # for cache naming only
+            checkpoint_path = checkpoint_paths[0]
+            checkpoint_mtime = max(p.stat().st_mtime for p in checkpoint_paths)
+        else:
+            run_name = run_name or DEFAULT_RUNS[(domain, backbone)]
+            self.model, cfg_dict, self.tok, checkpoint_path = self._load_single_model(run_name)
+            checkpoint_mtime = checkpoint_path.stat().st_mtime
 
         # Graph-building (300 forward passes for model-prediction edges) and
         # threshold calibration (500+ more) are real, repeated work -- every
@@ -117,7 +217,6 @@ class Ducky:
         # serving stale graph/thresholds for new weights.
         SETUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_path = SETUP_CACHE_DIR / f"{run_name}.pkl"
-        checkpoint_mtime = checkpoint_path.stat().st_mtime
         cached = None
         if use_cache and cache_path.exists():
             with cache_path.open("rb") as f:

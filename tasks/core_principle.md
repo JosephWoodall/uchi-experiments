@@ -53,3 +53,54 @@ CPU-only, single-modality scaling-law harness. Any experiment here that
 can't trace back to "does this move the params-per-FLOP or
 verified-accuracy needle, measured on toy data" is scope creep. Drift from
 this triggers a re-plan, not a bigger experiment.
+
+**Standing methodology: small-scale-first, always.** Every architectural
+idea proves itself at toy scale — `xs`/`s`/`m` preset, `rj` domain (or a
+small slice of a bigger one) — *before* any `xl`/`xxl`-scale commitment is
+made. Not a new rule: the pattern every real decision in this repo has
+already followed. MoE/swarm were rejected using a 700-step toy run before
+any GPU-week was spent chasing them. `tie_layers` and the confidence-gated
+early-exit idea were both validated on `rj`/"m" (minutes, megabytes)
+before touching `code`/xl (hours, gigabytes). The tokenizer-fairness
+comparison trained three small (vocab=8192, a few MB) candidates before
+committing to the one full-scale (vocab=32768, ~1.5GB) production build.
+What's being written down here is the rule those decisions already
+obeyed, so it stops being an instinct applied inconsistently and starts
+being a checklist applied every time:
+
+1. State the hypothesis and the cheapest possible test that could kill it
+   — an inference-only probe against an existing checkpoint beats a new
+   training run; a toy `rj`/"m" training run beats a `code`/xl one.
+2. Run that test first. Report the real number, win or lose, before
+   writing a single line of code that only matters at production scale.
+3. Only after a toy-scale result is genuinely promising does spending
+   xl/xxl-scale compute (hours, not minutes; gigabytes, not megabytes)
+   become justified — and that jump itself gets called out explicitly as
+   a separate, deliberate decision, not a natural next step taken by
+   default.
+4. A toy-scale negative result is a real result, not a reason to
+   "try again bigger to be sure" — `tasks/ducky.md`'s own five-for-five
+   BPTT-retention rounds and the MoE/swarm rejections both stand on toy-
+   scale evidence, and scaling either of them up was never the fix for a
+   mechanism-level negative finding.
+
+This is the same discipline as the Chinchilla-ratio checks already used
+for every dense/hybrid comparison in this file — just stated as a rule for
+*how* to run any future experiment, not only *what* to measure once it's
+running.
+
+**Upgrade: fit a curve across sizes, not just one toy-scale point, when
+the stakes justify it.** A single small-scale result can mislead — see
+`tasks/ducky.md`'s selective-decay entry, where a single (vocab=1024,
+"m"-size) point looked like a clean win and a 2-size, 3-domain sweep
+reversed it. `src/fit_scaling_law.py` (Kaplan et al. 2020, arXiv:2001.08361;
+Hoffmann et al./Chinchilla 2022, arXiv:2203.15556) fits `L(N) = a * N^
+(-alpha)` from a log-log linear regression over several small sizes and
+extrapolates — this is the literal, general-purpose answer to "simulate
+large scale cheaply," and it's what `tasks/todo.md`'s original Phase A-D
+plan set out to build before Ducky's own architecture questions took
+over. Use it whenever a promotion decision (parked here vs. moved into the
+production backbone) is being made, not just a single toy-scale
+comparison — and, per the tie_layers and selective-decay lessons both,
+across more than one domain, since averaging or single-domain checks are
+exactly what hides the disagreement that matters.

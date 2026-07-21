@@ -1,0 +1,13 @@
+{
+  "domain": "code_core",
+  "size": "s",
+  "arch": "adjacent",
+  "adjacent_layer": [
+    1
+  ],
+  "n_params": 1213120,
+  "block_stack_params": 154176,
+  "best_val": 7.0988,
+  "best_step": 200,
+  "wall_s": 158.08
+}

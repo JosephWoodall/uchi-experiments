@@ -17,9 +17,12 @@ explicit builtins allowlist (no os/subprocess/open/import) and a
 wall-clock timeout via SIGALRM -- unlikely to be adversarial at this
 scale/domain (it's Ducky's own generations, not external input) but not
 assumed safe either, since a hallucinated infinite loop is a real failure
-mode a toy checkpoint can actually produce.
+mode a toy checkpoint can actually produce. The primitive itself now
+lives in grounding.run_sandboxed (moved there so it's reusable as a
+generation-time signal, not just this offline benchmark's grading
+mechanism) -- run_task below is a thin, behavior-preserving wrapper.
 """
-import signal
+from grounding import run_sandboxed
 
 TASKS = [
     {"name": "clamp",
@@ -54,41 +57,9 @@ TASKS = [
      "asserts": ["assert running_sum([1, 2, 3]) == [1, 3, 6]"]},
 ]
 
-_SAFE_BUILTINS = {
-    "len": len, "range": range, "sum": sum, "min": min, "max": max, "abs": abs,
-    "round": round, "sorted": sorted, "list": list, "dict": dict, "set": set,
-    "tuple": tuple, "str": str, "int": int, "float": float, "bool": bool,
-    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
-    "isinstance": isinstance, "ValueError": ValueError, "TypeError": TypeError,
-    "ZeroDivisionError": ZeroDivisionError, "True": True, "False": False, "None": None,
-}
-
-
-class _Timeout(Exception):
-    pass
-
-
-def _handler(signum, frame):
-    raise _Timeout()
-
 
 def run_task(full_text: str, asserts: list, timeout_s: float = 2.0) -> dict:
-    safe_globals = {"__builtins__": dict(_SAFE_BUILTINS)}
-    local_ns: dict = {}
-    old_handler = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(max(1, int(timeout_s)))
-    try:
-        exec(full_text, safe_globals, local_ns)
-        for a in asserts:
-            exec(a, safe_globals, local_ns)
-        return {"passed": True}
-    except _Timeout:
-        return {"passed": False, "error": "timeout"}
-    except Exception as e:
-        return {"passed": False, "error": f"{type(e).__name__}: {e}"}
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+    return run_sandboxed(full_text, extra_statements=asserts, timeout_s=timeout_s)
 
 
 def run_benchmark(ask_fn, tasks: list = None) -> dict:

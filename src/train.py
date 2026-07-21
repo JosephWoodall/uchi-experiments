@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
@@ -37,7 +38,7 @@ from data import (
     load_weighted_code_corpus,
 )
 from model import GPTConfig, TinyGPT
-from tokenizer import Tokenizer
+from tokenizer import VOCAB_SIZE, Tokenizer
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "runs"
@@ -64,9 +65,24 @@ SIZES = {
     # --embedding-rank 96): at the current vocab=32768, 28.08M params
     # targets a Chinchilla-ideal ~561.6M tokens, close to text's projected
     # ~428M-token post-expansion size (~1.3x under, not 10x+ under like
-    # forcing code onto this size would be). code stays on "xl" -- its
-    # ~52M-token ceiling is already reasonably matched there.
+    # forcing code onto this size would be).
+    # Correction, computed for real (not assumed) in a later round: "xl"'s
+    # 11.6M params is NOT "reasonably matched" to code's real ~43.3M-token
+    # ceiling the way this comment used to claim -- Chinchilla-optimal for
+    # that real token count (measured directly: 2,528,834 core +
+    # 40,735,106 breadth) is ~2.16M params, ~5x smaller. See "chinchilla_min"
+    # below, the size that's actually matched.
     "xxl": dict(d_model=384, n_layer=14, n_head=8),
+    # Computed (not guessed) Chinchilla-optimal size for code's real,
+    # measured token budget (43,263,940 tokens / 20 = 2,163,197 -- this
+    # config's 2,259,584 total params, embedding_rank=32, is within 4.5%).
+    # Trained and validated: best_val=3.6779, dramatically better than any
+    # toy vocab=32768 size tested at mismatched params (see tasks/ducky.md's
+    # "minimum viable size" round) -- direct evidence for matching params
+    # to real data over just picking a bigger preset. Pair with
+    # --rwkv-hybrid --attention-layers 5 --embedding-rank 32
+    # --tokenizer-variant balanced --vocab-size 32768 to reproduce.
+    "chinchilla_min": dict(d_model=128, n_layer=6, n_head=4),
 }
 
 PROMPTS = {
@@ -77,11 +93,39 @@ PROMPTS = {
 
 
 MOE_AUX_WEIGHT = 0.01  # standard small weight for load-balancing losses
+HALT_AUX_WEIGHT = 0.1  # weight for the halting-head BCE loss (model.py's halting_loss) -- higher
+# than MOE_AUX_WEIGHT since this is the actual training signal for the halt heads, not a
+# regularizer on top of an otherwise-independent mechanism
+WIDTH_SPARSITY_WEIGHT = 0.05  # weight pushing WidthGatedMLP's gates below 1.0 (model.py's
+# width_sparsity_loss) -- the only pressure to use less width on easy tokens, since the task
+# loss alone has no other reason to
+
+
+def get_lr(step: int, warmup_steps: int, max_steps: int, max_lr: float, min_lr: float) -> float:
+    """Linear warmup, then cosine decay to min_lr -- the standard nanoGPT/
+    minGPT recipe. Opt-in via --lr-schedule cosine (see argparse below);
+    every run before this used a flat args.lr for the whole budget, which
+    under-serves larger matrices specifically -- the concern motivating
+    this addition ahead of re-running the d_model sweep.
+    """
+    if step < warmup_steps:
+        return max_lr * (step + 1) / warmup_steps
+    if step > max_steps:
+        return min_lr
+    decay_ratio = (step - warmup_steps) / max(1, max_steps - warmup_steps)
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+    return min_lr + coeff * (max_lr - min_lr)
 
 
 def compute_lm_loss(model, x, targets, pad_id):
     """targets: (B, T, n_future); k=0 is the standard next-token target."""
-    logits, extra_logits, aux_loss, _ = model(x)
+    use_halting = getattr(model, "halt_heads", None) is not None
+    if use_halting:
+        logits, extra_logits, aux_loss, _, halt_loss = model.forward_with_halting(x)
+    else:
+        logits, extra_logits, aux_loss, _ = model(x)
+        halt_loss = torch.tensor(0.0)
+    width_loss = model.width_sparsity_loss() if hasattr(model, "width_sparsity_loss") else torch.tensor(0.0)
     all_logits = [logits] + (extra_logits or [])
     total, count = 0.0, 0
     for k, lg in enumerate(all_logits):
@@ -94,7 +138,8 @@ def compute_lm_loss(model, x, targets, pad_id):
         )
         total = total + loss_k
         count += 1
-    return total / max(count, 1) + MOE_AUX_WEIGHT * aux_loss
+    return (total / max(count, 1) + MOE_AUX_WEIGHT * aux_loss + HALT_AUX_WEIGHT * halt_loss
+            + WIDTH_SPARSITY_WEIGHT * width_loss)
 
 
 def info_nce(a: torch.Tensor, b: torch.Tensor, temperature: float = 0.1) -> torch.Tensor:
@@ -117,7 +162,10 @@ def run(args):
     if is_joint and args.arm != "base":
         raise ValueError("joint dataset only wired for the base arm in this pass")
 
-    tok = None if is_modality else Tokenizer()
+    tok = None if is_modality else (
+        Tokenizer(vocab_size=args.vocab_size or VOCAB_SIZE, variant=args.tokenizer_variant)
+        if (args.vocab_size or args.tokenizer_variant) else Tokenizer()
+    )
     vocab_size = UNIFIED_VOCAB_SIZE if is_joint else (N_CODES if is_modality else tok.vocab_size)
     size_cfg = SIZES[args.size]
     n_future = args.n_future if args.arm == "mtp" else 1
@@ -133,6 +181,12 @@ def run(args):
         attention_layers=tuple(args.attention_layers) if args.attention_layers else (),
         use_bitlinear=args.use_bitlinear,
         embedding_rank=args.embedding_rank,
+        tie_layers=args.tie_layers,
+        use_halting=args.use_halting,
+        use_selective_decay=args.selective_decay,
+        selective_decay_layers=tuple(args.selective_decay_layers) if args.selective_decay_layers else (),
+        use_width_gating=args.use_width_gating,
+        scaled_residual_init=args.nanogpt_recipe,
         **size_cfg,
     )
     model = TinyGPT(cfg)
@@ -149,13 +203,40 @@ def run(args):
     # generate()/state_dict()/save -- same underlying parameters either way.
     compute_model = torch.compile(model) if args.compile_full_model else model
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    if args.nanogpt_recipe:
+        # nanoGPT/uchi (flux/train_v2.py) convention: decay only >=2D weight
+        # matrices, never biases/LayerNorm/1D params; betas=(0.9, 0.95) --
+        # uchi's own comment: "slightly lower beta2 for stability with small
+        # models," the exact regime every run here trains in. Previously
+        # this call passed no weight_decay/betas at all, so AdamW silently
+        # used its own defaults (weight_decay=0.01 applied to EVERY param
+        # including embeddings/LayerNorm/biases, betas=(0.9, 0.999)) --
+        # unexamined, not a deliberate choice, and untested against the
+        # nanoGPT-standard alternative until now.
+        decay, no_decay = [], []
+        for p in model.parameters():
+            (decay if p.dim() >= 2 else no_decay).append(p)
+        opt = torch.optim.AdamW(
+            [{"params": decay, "weight_decay": args.weight_decay}, {"params": no_decay, "weight_decay": 0.0}],
+            lr=args.lr, betas=(0.9, args.beta2),
+        )
+    else:
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    min_lr = args.min_lr if args.min_lr is not None else args.lr * 0.1
 
     moe_suffix = f"_moe{args.moe_experts}" if args.moe_experts > 0 else ""
     moe_suffix += "bl" if args.bitlinear_experts else ""
     moe_suffix += "_rwkv" if args.rwkv_hybrid else ""
     moe_suffix += "_bitlin" if args.use_bitlinear else ""
     moe_suffix += f"_rank{args.embedding_rank}" if args.embedding_rank > 0 else ""
+    moe_suffix += "_tied" if args.tie_layers else ""
+    moe_suffix += "_halt" if args.use_halting else ""
+    moe_suffix += "_selective" if args.selective_decay else ""
+    moe_suffix += f"_selectiveL{''.join(map(str, args.selective_decay_layers))}" if args.selective_decay_layers else ""
+    moe_suffix += "_widthgate" if args.use_width_gating else ""
+    moe_suffix += f"_tok{args.tokenizer_variant}" if args.tokenizer_variant else ""
+    moe_suffix += f"_lr{args.lr_schedule}" if args.lr_schedule != "none" else ""
+    moe_suffix += "_nanogpt" if args.nanogpt_recipe else ""
     moe_suffix += f"_seed{args.seed}" if args.seed != 0 else ""
     run_name = f"{args.dataset}_{args.arm}_{args.size}{moe_suffix}"
     run_dir = RUNS_DIR / run_name
@@ -299,8 +380,31 @@ def run(args):
     best_step = 0
     patience_counter = 0
     stopped_early = False
+    # Plateau state -- separate from patience_counter (early stopping) on purpose:
+    # --patience/--min-delta already answers "when to give up," this answers "when
+    # to slow down." Independent thresholds so e.g. --plateau-patience 3
+    # --patience 10 can decay LR twice before finally stopping. No max_steps
+    # horizon needed anywhere in this branch, unlike --lr-schedule cosine --
+    # the exact bug that produced two false-negative recipe comparisons this
+    # session (rj @ 700 steps, code @ 1200 steps: cosine decayed to its floor
+    # before the model had actually converged, because the true horizon was
+    # guessed wrong both times). Plateau reacts to the model's own live val-loss
+    # trend instead of a schedule fixed in advance.
+    plateau_lr = args.lr
+    plateau_stall = 0
+    plateau_cooldown_left = 0
     t0 = time.time()
     for step in range(1, args.steps + 1):
+        current_lr = args.lr
+        if args.lr_schedule == "cosine":
+            current_lr = get_lr(step - 1, args.warmup_steps, args.steps, args.lr, min_lr)
+            for g in opt.param_groups:
+                g["lr"] = current_lr
+        elif args.lr_schedule == "plateau":
+            current_lr = plateau_lr
+            for g in opt.param_groups:
+                g["lr"] = current_lr
+
         model.train()
         opt.zero_grad()
         loss, extra = train_step()
@@ -310,7 +414,8 @@ def run(args):
 
         if step % args.log_every == 0 or step == args.steps:
             eval_metrics = eval_step()
-            entry = {"step": step, "wall_s": round(time.time() - t0, 2), **extra, **eval_metrics}
+            entry = {"step": step, "wall_s": round(time.time() - t0, 2), "lr": current_lr,
+                      **extra, **eval_metrics}
             metrics_log.append(entry)
             print(entry)
 
@@ -319,9 +424,23 @@ def run(args):
                 best_val = eval_metrics[val_key]
                 best_step = step
                 patience_counter = 0
+                plateau_stall = 0
                 torch.save(model.state_dict(), run_dir / "model_best.pt")
             else:
                 patience_counter += 1
+                if args.lr_schedule == "plateau":
+                    if plateau_cooldown_left > 0:
+                        plateau_cooldown_left -= 1
+                    else:
+                        plateau_stall += 1
+                        if plateau_stall >= args.plateau_patience:
+                            new_lr = max(plateau_lr * args.plateau_factor, min_lr)
+                            if new_lr < plateau_lr:
+                                print(f"plateau: reducing lr {plateau_lr:.2e} -> {new_lr:.2e} "
+                                      f"at step {step} (no improvement for {args.plateau_patience} checkpoints)")
+                                plateau_lr = new_lr
+                            plateau_stall = 0
+                            plateau_cooldown_left = args.plateau_cooldown
                 # Every extended sweep this session found its real ceiling
                 # by running long past it and reading off the best
                 # checkpoint after the fact -- e.g. code/base/m at step
@@ -407,7 +526,12 @@ def run(args):
     }
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    """Factored out of __main__ so run_hpo_sweep.py can build the exact same
+    argparse.Namespace train.run() expects (many attributes -- reconstructing
+    them by hand would drift out of sync with this file) instead of
+    duplicating the CLI surface or shelling out per trial.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=["rj", "text", "code", "pixel", "audio", "joint"], required=True)
     p.add_argument("--arm", choices=["base", "mtp", "jepa-aux"], required=True)
@@ -431,6 +555,29 @@ if __name__ == "__main__":
     p.add_argument("--attention-layers", type=int, nargs="*", default=[], help="0-indexed layers using attention when --rwkv-hybrid; rest use RWKV")
     p.add_argument("--use-bitlinear", action="store_true", help="BitLinear throughout Ducky's own blocks (attention/RWKV + dense MLP)")
     p.add_argument("--embedding-rank", type=int, default=0, help="0 = plain tied embedding; >0 = TensorRankEmbedding at this rank")
+    p.add_argument("--tie-layers", action="store_true", help="Universal-Transformer/ALBERT-style: reuse one "
+                    "physical block's weights at every depth step instead of n_layer independent blocks -- "
+                    "cuts the block stack's param count, requires a homogeneous block type (see model.py)")
+    p.add_argument("--vocab-size", type=int, default=None, help="explicit tokenizer vocab size (e.g. 1024 to "
+                    "match older toy-scale checkpoints) -- default None uses tokenizer.py's module default "
+                    "(currently 32768), unchanged existing behavior")
+    p.add_argument("--selective-decay", action="store_true", help="mamba_lite.py's SelectiveTimeMixing "
+                    "(input-dependent decay) instead of rwkv_model.py's TimeMixing for non-attention "
+                    "blocks when --rwkv-hybrid is set")
+    p.add_argument("--selective-decay-layers", type=int, nargs="*", default=[], help="0-indexed "
+                    "non-attention layers that use SelectiveTimeMixing specifically -- overrides "
+                    "--selective-decay's all-or-nothing when given (e.g. attention-adjacent layers only)")
+    p.add_argument("--use-width-gating", action="store_true", help="WidthGatedMLP instead of the plain "
+                    "dense MLP -- confidence-gated width, the width-axis analog of --use-halting's "
+                    "depth-axis question (model.py's WidthGatedMLP/width_sparsity_loss)")
+    p.add_argument("--use-halting", action="store_true", help="per-block halting head, trained via an "
+                    "auxiliary BCE loss (model.py's halting_loss) to predict whether this layer's own "
+                    "prediction already matches the final-depth one -- the trained counterpart to "
+                    "eval_early_exit.py's untrained logit-lens probe")
+    p.add_argument("--tokenizer-variant", type=str, default="", help="tokenizer.py's Tokenizer(variant=...) -- "
+                    "e.g. 'balanced' to opt into data/tokenizer/spm_{vocab_size}_balanced.model (see "
+                    "build_production_tokenizer.py) instead of the default naive-concat tokenizer. Plumbing only: "
+                    "does not itself retrain anything, just enables a future run to request the new tokenizer.")
     p.add_argument("--code-core-weight", type=float, default=0.5,
                     help="--dataset code only: sampling weight for stdlib ('core') vs site-packages "
                     "('breadth') per training example, default 0.5/0.5 despite core being ~14x smaller "
@@ -442,6 +589,32 @@ if __name__ == "__main__":
                     "data/code/synthetic_relational.txt exists: fraction of training examples drawn "
                     "from synthetic call-graph-composed statements, remainder split between core/breadth "
                     "per --code-core-weight.")
+    p.add_argument("--lr-schedule", choices=["none", "cosine", "plateau"], default="none", help="'none' "
+                    "(default) -- flat args.lr for the whole run, unchanged behavior for every existing "
+                    "checkpoint's reproducibility. 'cosine' -- linear warmup then cosine decay to --min-lr "
+                    "over a FIXED --steps horizon (the standard nanoGPT/minGPT recipe) -- twice this session "
+                    "produced a false negative when the guessed horizon was shorter than the model's actual "
+                    "convergence point (decayed to near-zero LR while still improving under flat LR). "
+                    "'plateau' -- reacts to the model's own live val-loss trend instead (ReduceLROnPlateau-"
+                    "style: reuses the existing best_val/patience-counter tracking below), no horizon "
+                    "guess required -- see --plateau-patience/--plateau-factor/--plateau-cooldown.")
+    p.add_argument("--warmup-steps", type=int, default=100, help="only used when --lr-schedule cosine")
+    p.add_argument("--min-lr", type=float, default=None, help="used when --lr-schedule cosine or plateau "
+                    "as a floor; default None computes args.lr * 0.1, the common nanoGPT ratio")
+    p.add_argument("--plateau-patience", type=int, default=5, help="--lr-schedule plateau only: checkpoints "
+                    "with no val-loss improvement (independent of --patience's early-stopping counter) "
+                    "before multiplying LR by --plateau-factor")
+    p.add_argument("--plateau-factor", type=float, default=0.5, help="--lr-schedule plateau only: LR "
+                    "multiplier applied on each plateau decay, floored at --min-lr")
+    p.add_argument("--plateau-cooldown", type=int, default=2, help="--lr-schedule plateau only: checkpoints "
+                    "to wait after a decay before plateau-patience starts counting again, so one decay "
+                    "doesn't immediately trigger another before the new LR has had a chance to help")
+    p.add_argument("--weight-decay", type=float, default=0.1, help="--nanogpt-recipe only: applied to "
+                    ">=2D params only (0.0 on biases/LayerNorm regardless of this value) -- was hardcoded "
+                    "0.1 (nanoGPT/uchi's own value), now exposed for run_hpo_sweep.py to search")
+    p.add_argument("--beta2", type=float, default=0.95, help="--nanogpt-recipe only: AdamW's second beta "
+                    "(beta1 stays fixed at 0.9) -- was hardcoded 0.95, now exposed for run_hpo_sweep.py "
+                    "to search")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--num-threads", type=int, default=8, help="torch.set_num_threads() -- measured optimal on this "
                     "machine (20 logical cores); the default 10 is close but 8 was faster, and 16-20 was 4-6x slower "
@@ -449,7 +622,18 @@ if __name__ == "__main__":
     p.add_argument("--compile-full-model", action="store_true", help="compile the whole forward pass, not just the "
                     "WKV scan -- faster steady-state (0.146s/step measured vs 0.217s/step scan-only) but ~480s "
                     "one-time compile cost vs ~170s; only worth it for long runs (breakeven ~4300 extra steps)")
-    args = p.parse_args()
+    p.add_argument("--nanogpt-recipe", action="store_true", help="bundle of nanoGPT/uchi training-recipe "
+                    "fixes never tested against this project's default AdamW(lr=lr) call: betas=(0.9, 0.95) "
+                    "instead of torch's (0.9, 0.999), weight_decay=0.1 on >=2D params only (0.0 on biases/"
+                    "LayerNorm, instead of AdamW's default 0.01 applied uniformly to everything including "
+                    "embeddings), and GPT-2-style scaled residual-projection init (model.py's "
+                    "scaled_residual_init). Independent of --lr-schedule -- pass both to match the full "
+                    "nanoGPT/uchi recipe. Opt-in, does not change any existing run's reproducibility.")
+    return p
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
     torch.manual_seed(args.seed)
     torch.set_num_threads(args.num_threads)
     run(args)

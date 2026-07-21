@@ -599,3 +599,1192 @@ symbol, a real n-gram, this checkpoint's own recalibrated confidence) —
 never by adding a second model, a vote, or an unverified heuristic dressed
 up as intelligence. If a future addition can't point at what it's checked
 against, it doesn't belong in Ducky.
+
+**Architecture critique: what's exhausted vs. what's genuinely untested.**
+Prompted by a direct challenge -- is the dense hybrid backbone worth it,
+and is MoE actually the alternative -- applied against evidence already in
+this file rather than fresh experiments.
+
+Two things are exhausted, not worth revisiting without a scale change:
+1. *Recurrence-block-type shopping* (RWKV -> Mamba-2/RetNet/Griffin/xLSTM
+   as a drop-in replacement), for base-loss reasons. Hybrid beats dense
+   6/6 seeds, but the margin (code 0.152±0.035 nats, rj 0.035±0.023 nats)
+   is dwarfed by data-scale effects measured in this same file: code
+   corpus growth alone (51K->149K tokens) moved *dense's own* baseline
+   4.815->~4.06 nats, a ~0.76 nat swing -- roughly 5x bigger than the
+   architecture's win over dense. At this scale, data currently dominates
+   block-type choice by a wide margin; swapping recurrence flavors reads
+   as real architecture research but the numbers say it's noise-level
+   next to corpus size.
+2. *Reopening MoE or swarm in any shape.* Both failed for the identical,
+   already-diagnosed reason: routing specialization JS-divergence was
+   0.0000-0.0002 at every layer on the two most different domains
+   available. That's a data-diversity problem, not a router-quality
+   problem -- no new MoE variant (Switch, DeepSeekMoE, soft-MoE, a
+   differently-shaped swarm) fixes a corpus that doesn't have enough
+   distinct token distributions for an expert to specialize on.
+
+One honest nuance on the retention finding: RWKV's time-decay
+(`time_decay`/`time_first` in `rwkv_model.py`) is a fixed, *content-
+independent* per-channel parameter -- the same decay regardless of what
+token is flowing through. Mamba/S6-style selective SSMs (Gu & Dao 2023,
+arXiv:2312.00752) exist specifically to make decay *input-dependent*, the
+exact mechanism RWKV lacks. The five-for-five "not a training-recipe
+problem" conclusion above was diagnosed on RWKV specifically -- it rules
+out training recipe for *this* content-independent-decay design, not for
+every linear-recurrent design. Real distinction, not backbone-flavor
+noise, but only load-bearing if cross-chunk retention specifically is
+still a goal (see ranking below -- backlog, not next, given the cost of
+testing it properly).
+
+What's genuinely untested and worth ranking, highest leverage first:
+1. **Conditional/adaptive compute gated on difficulty, not learned
+   content-specialization** -- Mixture-of-Depths (Raposo et al. 2024,
+   arXiv:2404.02258) or a simpler confidence-gated early-exit. Routes on a
+   scalar (predicted difficulty / this checkpoint's own confidence)
+   instead of requiring a router to learn "which domain is this," so it
+   doesn't hit MoE's proven failure mode -- difficulty variance (some
+   tokens are near-deterministic: closing brackets, common keywords;
+   others wide open) exists even in a small, non-diverse corpus.
+   Architecturally the most coherent option too: Ducky already computes
+   calibrated per-token confidence for abstention (`grounding.py`,
+   `predict_next`'s fast/slow path split); extending that same signal to
+   decide how many blocks a token gets is a natural extension of an
+   existing mechanism, not a second model or a bolted-on vote.
+2. **Layer weight-sharing** (Universal-Transformer/ALBERT-style tied
+   blocks) -- newly relevant because code's realistic zero-download data
+   ceiling (~52M tokens) was just hit (the latest "Scale-up round"
+   commit), while text still has Gutenberg headroom. For code
+   specifically, "more data" is no longer a free lever; weight-sharing
+   turns "more layers" into "more effective passes through fewer physical
+   parameter sets," freeing param budget for width/rank growth at fixed
+   total params. A parameter-efficiency question, distinct from
+   recurrence-type.
+3. **Input-selective decay (Mamba/S6-style)**, as a real test of the
+   retention question specifically -- mechanistically distinct from
+   RWKV's fixed decay, so not covered by the five-for-five negative
+   result. Backlog, not next: needs a real associative/chunked-scan
+   implementation to be trustworthy at any real sequence length (not
+   another Python-loop toy version), and only pays off if long-range
+   retention is still a goal -- the dominant finding across this whole
+   project remains that data scale outweighs every architecture lever
+   tested so far.
+
+The comfort tax: swapping RWKV for a fancier recurrence reads as "doing
+real architecture research"; wiring the existing confidence signal into a
+depth-router reads as "just plumbing." The evidence says the plumbing move
+has a live, untested hypothesis and a principled reason to succeed exactly
+where MoE failed (no specialization required), while the glamorous move
+is already shown to be noise-level. No code changes or experiments were
+run for this critique -- see `tasks/todo.md`'s new backlog phase for the
+ranked next steps.
+
+**Ranked ideas #1 and #2, actually implemented and tested (idea #3 stays
+backlog).** Kept to a tight memory/time budget deliberately (a concurrent
+process was consuming real RAM): `rj` domain only (~150KB raw text),
+`vocab_size=1024`, `"m"` size (940,800 params dense) -- same toy scale
+`runs/rj_base_m` already used, no code/text corpora touched.
+
+**Real bug found while setting this up, not fixed (out of scope, flagged
+honestly):** `runs/rj_base_m` was trained against the *original*
+unversioned tokenizer file (`data/tokenizer/spm.model`, predating the
+vocab-versioning fix earlier in this file), not today's
+`data/tokenizer/spm_1024.model` -- same vocab size, different BPE merges
+(the versioned file was trained later, against a different snapshot of the
+combined corpus), so different token-ID meanings. Loading that checkpoint
+with today's tokenizer is silently wrong, not a crash: measured val loss
+~8.6 nats (worse than the ln(1024)=6.93 random-guessing floor) instead of
+the recorded 4.3746; the actual original tokenizer file reproduces 4.385,
+confirming the mismatch, not a training regression. This exact fallback
+pattern (`Tokenizer(vocab_size=cfg_dict.get("vocab_size", 1024))`) is also
+in `ducky.py` -- meaning any pre-versioning checkpoint loaded through the
+SDK today likely gets silently wrong token IDs, not an error. Not fixed
+this round (broader than the two ranked ideas, touches every pre-versioning
+checkpoint); routed around here by training fresh, consistently-tokenized
+checkpoints (`rj_base_m_seed57`, `rj_base_m_tied_seed57`) instead of relying
+on the stale one.
+
+**Idea #1: confidence-gated conditional compute, cheapest test first
+(`eval_early_exit.py`).** Zero training, zero new parameters: probes
+`rj_base_m_seed57` (freshly trained for this purpose, dense 4-layer,
+940,800 params, best_val=3.6623 @ step 900) by reusing its own already-
+trained `ln_f`+`lm_head` at every intermediate depth ("logit lens,"
+nostalgebraist 2020) instead of only at the end. Confidence and accuracy
+both rise with depth as expected (layer 1: conf 0.113/acc 6.0%; layer 4:
+conf 0.258/acc 23.0%). Swept exit thresholds: at 0.5, 2.7% average compute
+saved for a -0.4pp accuracy cost (noise-level on 500 samples); at 0.3,
+13.15% saved but a real -3.8pp accuracy cost; at 0.7/0.85, negligible
+savings either way. **Honest conclusion: a zero-training probe doesn't
+cleanly separate "safe to exit early" from "needs full depth" enough to
+buy meaningful compute savings without a real accuracy cost, at this
+checkpoint's scale.** This does not kill the idea -- CALM/Mixture-of-Depths
+train the exit decision jointly with the task loss rather than reusing an
+untrained-for-this-purpose head, a materially different (likely
+better-calibrated) test this round deliberately didn't attempt, matching
+the "cheapest test that could kill the idea, first" discipline. What this
+round does establish: the mechanism needs to be trained, not just probed
+post-hoc, before it's worth judging.
+
+**Idea #2: layer weight-sharing (`tie_layers`, `model.py`/`train.py`).**
+`GPTConfig.tie_layers`: one shared `Block` instance referenced `n_layer`
+times in the `ModuleList`; `nn.Module.parameters()` de-duplicates by tensor
+identity, verified directly (940,800 -> 345,984 params on construction,
+exact arithmetic match with the expected embedding+head overhead, no
+double-counting bug). Trained on `rj`/base/m, vocab=1024, seed=57,
+2000-step budget/patience=2 (same convention as `rj_base_m`): **tied
+best_val=3.6845 @ step 1400 vs. untied (freshly retrained, identical seed/
+settings) best_val=3.6623 @ step 900 -- a real but small gap (0.0222 nats)
+for a 63.2% cut in block-stack parameters.** Real, honest caveat: this is
+a parameter-*count* win, not a compute win -- the tied model still runs all
+4 block-applications per forward pass (identical FLOPs/token, same weights
+reused), and needed *more* steps to reach its best checkpoint (1400 vs 900)
+and more wall-clock (343.5s vs 144.6s), not fewer. The untested follow-up
+this opens (not attempted this round): does reinvesting the freed param
+budget into width recover or beat the untied baseline at the *same* total
+param count -- that's the real test of "more effective passes through
+fewer parameter sets," this round only tested "fewer parameters, same
+width." Single-seed, `rj`-domain result (not `code`, where the actual
+motivating data-ceiling problem lives) -- same caveat this file applies
+everywhere else to single-seed numbers; needs a repeat-seed check and a
+`code`-domain run before being treated as decided.
+
+**Memory, measured not assumed:** peak RSS during both training runs was
+~1.04GB each (`resource.getrusage().ru_maxrss`); the early-exit probe
+peaked at ~751MB. Comfortably small next to the concurrent process's
+~5.7GB RSS this was budgeted around.
+
+**Token efficiency: tokenizer-fairness diagnostic + candidate comparison
+(`extract_terminal_corpus.py`, `eval_tokenizer_fairness.py`,
+`build_candidate_tokenizers.py`).** Follow-up to the "token efficiency"
+line of the critique -- is the shared text+code BPE vocab (`tokenizer.py`)
+actually fair across domains, and would a terminal-command domain make
+that worse. Audio/pixel were confirmed out of scope for this question:
+`codec.py`'s separate VQ-VAE codebooks + `data.py`'s offset ranges already
+match current unified-multimodal-tokenizer practice (UniTok, UGen,
+MM-Tokenizer all converge on modality-specific quantizers feeding one
+discrete ID space), so the domination risk is specific to BPE-shared
+symbolic domains (text/code/terminal).
+
+Sourced a real, tiny, near-zero-cost domain corpus first: NL2Bash (Lin et
+al. 2018, arXiv:1802.08979) -- 12,607 real bash one-liners scraped from
+StackOverflow, fetched directly from GitHub (`data/terminal/
+nl2bash_corpus.txt`, 574,351 chars, exact expected count, confirming a
+clean fetch). Built a fertility (tokens/char) + Gini-coefficient fairness
+diagnostic (`eval_tokenizer_fairness.py`, small tail slices per domain via
+seek+read -- never loads `gutenberg_corpus.txt`'s 1.3GB whole) that works
+against any SentencePiece `.model` file, so the same script scores both
+the production tokenizer and any candidate.
+
+**Baseline result, current production tokenizer (`spm_32768.model`,
+vocab=32768), measured for the first time against terminal-command
+text it has never seen:** text fertility 0.2467, code 0.2395 (comparable
+to each other), terminal 0.4070 -- ~65-70% more tokens per char than
+text/code. Gini across the three domains: 0.125. Confirms the diagnosed
+problem directly: a domain absent from tokenizer training pays a real,
+measurable compression penalty, not a hypothetical one.
+
+**Three small candidates trained for comparison** (vocab=8192, a few MB
+of input each, `data/tokenizer/candidates/`, production `spm_32768.model`
+untouched) -- naive-concat BPE (today's approach, but now including
+terminal data), resampled BPE (text/code/terminal upsampled/truncated to
+~1.5M chars each before training), resampled Unigram (identical resampled
+corpus, `model_type="unigram"`). Peak RSS for all three combined: ~209MB.
+
+| tokenizer | vocab | text | code | terminal | Gini |
+|---|---|---|---|---|---|
+| spm_32768 (production) | 32768 | 0.2467 | 0.2395 | 0.4070 | 0.1250 |
+| naive_bpe (small-scale, +terminal) | 8192 | 0.3113 | 0.2577 | 0.3692 | 0.0792 |
+| resampled_bpe | 8192 | 0.3179 | 0.2583 | 0.3559 | 0.0698 |
+| resampled_unigram | 8192 | 0.3410 | 0.2635 | 0.3659 | 0.0703 |
+
+**Honest reading, three separate findings, not one:**
+1. **The single biggest lever is simply including terminal data in
+   training at all.** `naive_bpe` (small-scale, but WITH terminal data)
+   already cuts Gini from 0.125 to 0.079 and terminal fertility from
+   0.407 to 0.369 -- most of the "fairness" gain comes from the domain
+   existing in the training mix, not from resampling. This is confounded
+   with vocab size (8192 vs. production's 32768) and training-corpus size
+   (a few MB vs. hundreds of MB to 1.3GB) -- not a same-scale controlled
+   comparison, flagged honestly rather than overclaiming the exact
+   magnitude would hold at production scale.
+2. **Resampling gives a further, real but modest improvement, with a real
+   trade-off.** `naive_bpe` -> `resampled_bpe`: Gini 0.0792 -> 0.0698
+   (~12% relative reduction), terminal fertility improves slightly
+   (0.3692 -> 0.3559), but text fertility gets *slightly worse* (0.3113 ->
+   0.3179) -- resampling helps the underrepresented domains at a small,
+   real cost to the previously-dominant one, exactly the mechanism
+   working as intended, not a free lunch.
+3. **Unigram does not help here -- a real, measured negative result, not
+   an assumption.** On the *identical* resampled corpus, `resampled_unigram`
+   has marginally worse fairness (Gini 0.0703 vs. 0.0698) and worse
+   absolute compression on every single domain (text 0.341 vs. 0.318,
+   code 0.2635 vs. 0.2583, terminal 0.3659 vs. 0.3559) than
+   `resampled_bpe`. Matches this round's research finding that Unigram vs.
+   BPE is domain-dependent, not universally better -- here, on Ducky's
+   actual domains, BPE wins outright. Reject Unigram for this project;
+   keep BPE.
+
+**Side finding, not a new bug, a pre-existing shared characteristic:**
+round-trip encode/decode was verified correct for text and terminal
+samples on all three candidates, but *not* for a code sample (indentation/
+newlines collapse to single spaces on decode) -- confirmed this is
+identical behavior on the production `spm_32768.model` too (SentencePiece's
+default `nmt_nfkc` normalizer's whitespace collapsing, not something these
+candidates introduced). Not a differentiator in this comparison; a real,
+separate improvement opportunity (`normalization_rule_tsv` override or
+`remove_extra_whitespaces=False`) if code round-trip fidelity ever matters
+for a downstream use case, not pursued this round.
+
+**Explicit non-decision:** migrating the production tokenizer was
+deliberately not attempted this round. That requires retraining every
+downstream checkpoint -- the same costly migration already paid for twice
+in this project (vocab 1024->8192->32768) -- and this comparison, while
+directionally clear (include terminal data + resample + keep BPE, don't
+switch to Unigram), used small-scale candidates specifically to stay cheap
+under concurrent CPU/GPU load, not a production-ready tokenizer. A real
+migration would need: the resampling ratio tuned at full corpus scale, the
+production vocab size (32768) re-validated at that scale rather than
+inherited from the 8192 comparison, and -- given the tokenizer-versioning
+bug already flagged in `tasks/todo.md`'s Phase N -- deliberate versioning
+this time so it doesn't silently break old checkpoints the way the
+pre-versioning tokenizer already did.
+
+**Real, full-corpus-scale "balanced" tokenizer built and validated
+(`spm_32768_balanced.model`) -- tokenizer only, no checkpoint retraining,
+by explicit user choice given the CPU/GPU contention and the ~3.8-hour
+historical cost of a single production retrain (`code_base_xl_rwkv_rank64`'s
+own `metrics.json`).**
+
+**Versioning fix landed first, additively:** `tokenizer.py`'s
+`Tokenizer`/`_model_prefix`/`train_if_missing` gained an optional
+`variant: str = ""` -- two tokenizers can now share a `vocab_size` but
+differ in training recipe (`spm_32768.model` vs.
+`spm_32768_balanced.model`) without colliding on the same filename.
+Default `variant=""` reproduces every existing filename exactly, verified
+directly (`_model_prefix(32768)` and `_model_prefix(1024)` unchanged;
+`Tokenizer(vocab_size=1024)` still loads and encodes correctly). This is
+the deliberate-versioning fix the earlier stale-tokenizer bug (this
+file's own tokenizer-fairness section, and `tasks/todo.md`'s Phase N)
+flagged as needed the next time a new tokenizer generation is built --
+landed now, not deferred again.
+
+**Alpha picked empirically, then corrected for scale, not assumed twice
+over.** Extended `build_candidate_tokenizers.py` with alpha-weighted
+resampling (`weight_domain = size_domain**alpha`) and swept alpha in
+{1.0, 0.5, 0.3} on the existing small samples: alpha=1.0 exactly
+reproduced the earlier `naive_bpe` numbers (Gini 0.0792 -- a real
+consistency check that the new alpha-weighted code path is correct, not
+just plausible), alpha=0.5 gave 0.0734, alpha=0.3 gave 0.0719 -- a
+monotonic small-scale improvement as alpha decreases. But small-scale
+domain sizes (~4:4:1) don't reflect real ones (~2300:300:1): computed the
+actual full-scale repeat count each alpha would imply for the terminal
+domain -- alpha=0.3 implies repeating NL2Bash's 574KB corpus ~156x to hit
+its target share (pathological, mostly-duplicate-driven merges); alpha=0.5
+implies ~39x (still real upsampling of a genuinely diverse small corpus --
+206 unique flags, 102 utilities -- not exact-duplicate noise at that
+multiple). Chose **alpha=0.5** over the small-scale sweep's marginally
+better 0.3, explicitly trading a small measured Gini difference for
+avoiding a repetition regime with no precedent for being safe.
+
+**Streaming corpus construction, not `tokenizer.py`'s existing whole-file-
+read approach.** `build_production_tokenizer.py` reads every source file
+(`romeo_and_juliet.txt`, `gutenberg_corpus.txt`, `chat_corpus.txt`,
+`corpus_core.txt`, `corpus_breadth.txt`, `nl2bash_corpus.txt`)
+line-by-line, applying a per-domain keep-probability (text: drop lines
+randomly, since its alpha-weighted target is below its natural size) or
+repeat-count (code, terminal: below target, so lines get rewritten
+`repeat` times, capped at `MAX_REPEAT=50` regardless of what the formula
+implies) -- never holds a full domain's text in one Python string, unlike
+`tokenizer.py`'s current `train_if_missing`. Real computed values, not
+estimated: text size=1,327,244,929 bytes, target=1,085,648,526
+(keep_prob=0.818); code size=177,945,415, target=397,518,286 (repeat=2);
+terminal size=575,091, target=22,598,624 (repeat=39, matching the
+alpha=0.5 estimate above almost exactly). Trained with `num_threads=4`
+(vs. SentencePiece's default of 16 used in the small-scale run) --
+deliberately less aggressive given the concurrent CPU load.
+
+**Real, measured cost: 1,886MB peak RSS** (`resource.getrusage`) for the
+full build (streaming ~1.5GB combined corpus through SentencePiece
+training) -- an order of magnitude more than the small-scale sweep's
+~132-209MB, exactly as expected given the corpus size, but still small
+next to available RAM and the concurrent process's own footprint.
+
+**Full-scale validation result, the number that actually matters:**
+
+| tokenizer | vocab | text | code | terminal | Gini |
+|---|---|---|---|---|---|
+| `spm_32768` (production, unchanged) | 32768 | 0.2467 | 0.2395 | 0.4070 | 0.1250 |
+| `spm_32768_balanced` (new) | 32768 | 0.2474 | 0.2386 | 0.3561 | 0.0930 |
+
+**The small-scale finding holds at real scale, and better than the small
+comparison's own trade-off pattern suggested.** Terminal fertility
+improved substantially (0.4070 -> 0.3561, ~12.5% relative reduction);
+Gini dropped 25.6% (0.1250 -> 0.0930) -- a real, large fairness gain. Text
+fertility is *unchanged within noise* (0.2467 -> 0.2474, +0.0007) rather
+than measurably worse as it was in the small-scale comparison, because at
+real scale text only gets trimmed to 81.8% of its 1.3GB (still enormous,
+diverse remaining text) rather than forced toward rough equality with a
+much smaller domain the way the small toy comparison did. Code fertility
+even improved slightly (0.2395 -> 0.2386) from its 2x upweighting. This is
+a cleaner win than the small-scale round predicted: at production scale,
+the fairness gain came essentially for free, not at a measurable cost to
+the previously-dominant domain.
+
+**Explicit non-decision, unchanged, by the user's own choice:** no
+checkpoint has been retrained on `spm_32768_balanced.model`.
+`code_base_xl_rwkv_rank64`, `text_base_xl_rwkv_rank64`, and `rj_base_m*`
+all still load and run on `spm_32768.model` exactly as before -- confirmed
+untouched (`git status` on `data/tokenizer/spm_32768.*` shows nothing).
+The new tokenizer exists, is validated at real scale, and is ready for a
+future retraining decision; it is not yet in use by anything.
+
+**Clearing the non-retraining backlog, all at toy scale (per the new
+small-scale-first rule in `tasks/core_principle.md`).** User's direction:
+do everything left except retraining production checkpoints.
+
+**Real bug found and fixed: `ducky.py`'s stale-tokenizer mismatch, plus a
+second, deeper one it exposed.** `Tokenizer` gained a `model_path`
+override (bypasses the `spm_{vocab_size}[_variant].model` naming
+convention entirely) and `ducky.py` now routes checkpoints with no
+recorded `vocab_size` to the preserved original `data/tokenizer/spm.model`
+instead of guessing `vocab_size=1024` against today's (different)
+`spm_1024.model`. Verifying this surfaced a second, previously-invisible
+bug: `data.py`'s tokenize cache was keyed only by `vocab_size`, so the
+legacy `spm.model` and the retrained `spm_1024.model` -- same vocab size,
+different token-ID mappings -- collided on the same cache file
+(`rj_1024.pt`). First fix attempt still reproduced the broken ~8.6-nat
+loss because of this collision; added `Tokenizer.cache_key` (equals
+`str(vocab_size)` for every existing plain caller -- verified zero
+disruption to `code`/`text` production paths, whose `cache_key` still
+exactly equals their `vocab_size`) and rekeyed `data.py`'s cache on it
+instead. **Verified end-to-end after both fixes:** `rj_base_m` reproduces
+val loss 4.3855 (matches the recorded 4.3746) instead of 8.638;
+`Ducky(domain="rj").ask(...)` runs correctly end-to-end (empty-string
+abstention on this toy checkpoint is expected behavior, already documented
+elsewhere in this file, not a new symptom). One real, one-time cost from
+this fix, measured not assumed: the first `Ducky(domain="rj")` call after
+the fix landed had to build a fresh `code_spm.pt`/`rj_spm.pt` cache (never
+existed under this cache key before) -- peak RSS 19.5GB for that one cold
+call, dropping to 2.3GB warm on the next call. `--tokenizer-variant` also
+wired into `train.py` (mirrors `--vocab-size`) -- plumbing only, enables
+but doesn't perform a future `spm_32768_balanced.model` retrain.
+
+**`tie_layers` width-reallocation: does reinvesting the freed params into
+width recover the untied baseline? No -- slightly worse, not better.**
+Searched `d_model` for a tied config landing near the untied baseline's
+940,800 params: `d_model=224` (`n_head=7`) gives 863,520 tied params, the
+closest achievable match. Result: best_val=3.7121 (early-stopped at step
+700, best@500) -- *worse* than the narrower tied variant's 3.6845 (345,984
+params), despite 2.5x more parameters, and worse than untied's 3.6623.
+Honest caveat: also converged faster/stopped earlier (700 steps vs
+narrow-tied's 1600), so this may be undertrained relative to its own
+capacity rather than a clean negative on the "width helps" hypothesis --
+single seed, not a settled answer, but the naive "just widen it" version
+of the idea does not work at this scale.
+
+**`tie_layers` repeat-seed (3 seeds) + code-domain check: rj result holds,
+but the domain-dependence is large and important.** Three seeds on `rj`/m,
+untied vs. tied, same steps/patience:
+
+| seed | untied best_val | tied best_val | gap |
+|---|---|---|---|
+| 57 | 3.6623 | 3.6845 | +0.0222 |
+| 58 | 3.6284 | 3.6337 | +0.0053 |
+| 59 | 3.6471 | 3.6801 | +0.0330 |
+
+Untied wins all 3 seeds, gap mean~0.0202 (std~0.0114) -- direction
+reproduces, consistent with the original single-seed finding. **Code
+domain (small already-cached 640,903-token corpus, `code_1024.pt` --
+predates the recent corpus expansions, reused here specifically to stay
+toy-scale): untied 3.6691 vs. tied 3.8856, gap +0.2165 -- roughly 10x
+larger than any `rj`-domain gap measured.** This is the load-bearing
+correction to last round's finding: `tie_layers`' cost is domain-dependent,
+and it costs substantially more on code -- the exact domain the idea was
+originally proposed for (code's data ceiling, not `rj`'s). Plausible
+reading: code likely benefits more than prose from genuinely different
+per-depth transformations (syntax-level patterns early, compositional
+structure later), so forcing all 4 depth-steps to share one transformation
+hurts it more. **Practical takeaway, corrected from last round: weight-
+sharing is not a free lunch for code specifically -- the domain it was
+meant to help pays the largest cost.** Single-seed on code; a repeat-seed
+code check is a natural follow-up, not done this round.
+
+**Idea #1 for real: training the halting head beats reusing an untrained
+one, clearly.** Added `GPTConfig.use_halting` (`model.py`): a per-block
+`Linear(d_model, 1)` halt head per depth step (negligible params, 516
+total for `n_layer=4`), trained via an auxiliary BCE loss
+(`TinyGPT.halting_loss`, `HALT_AUX_WEIGHT=0.1` in `train.py`) predicting
+"does this layer's own logit-lens prediction already match the final-depth
+prediction" -- the identical signal `eval_early_exit.py`'s untrained probe
+checked empirically, now actually learned. Trained at `rj`/m scale
+(941,316 params, seed 57): best_val=3.7639, a real +0.1016-nat cost versus
+the untied baseline's 3.6623 -- the auxiliary objective genuinely competes
+with the primary task at this toy scale (`HALT_AUX_WEIGHT` is a real,
+untuned lever, not validated at other values this round).
+
+New `eval_halting.py` (mirrors `eval_early_exit.py`'s exact methodology --
+same `THRESHOLDS`, same `n_samples=500` -- for direct comparability) shows
+the trained signal is far more decisive and far more useful:
+
+| | threshold | avg_exit_depth | compute_saved | accuracy_delta |
+|---|---|---|---|---|
+| untrained probe | 0.5 | 3.892 | 2.7% | -0.004 |
+| untrained probe | 0.3 | 3.474 | 13.15% | -0.038 |
+| **trained halting** | **0.7** | **3.42** | **14.5%** | **-0.002** |
+| **trained halting** | **0.5** | **2.102** | **47.45%** | **-0.056** |
+
+At a near-zero accuracy cost, trained halting buys ~14.5% compute savings
+where the untrained probe's best near-zero-cost point only ever managed
+0.75% -- roughly an order of magnitude better. At a moderate cost budget
+(~5-6pp), trained halting buys 47.45% savings, far past anything the
+untrained probe reached at *any* threshold (its most aggressive setting,
+threshold=0.3, only reached 13.15%). **Real, positive result: the
+mechanism needed to be trained, not just probed, and once trained it
+clearly works at toy scale** -- confirms the prediction from last round's
+inconclusive result rather than leaving it open. Real cost to weigh
+against the gain: the +0.10-nat hit to the primary LM loss from training
+the auxiliary objective at all.
+
+**Idea #3 first-rung check: `SelectiveTimeMixing` (Mamba/S6-style
+input-dependent decay) beats plain RWKV, a genuinely new positive result.**
+New `mamba_lite.py`, isolated (mirrors `rwkv_model.py`'s own pattern):
+`time_decay` becomes `-softplus(Linear(x))` (per-token, per-channel,
+input-dependent) instead of `TimeMixing`'s fixed `nn.Parameter` -- the
+actual mechanistic distinction the critique flagged, RWKV's decay being
+content-independent regardless of what token is flowing through. Wired
+into `model.py` as `GPTConfig.use_selective_decay` (only valid alongside
+`use_rwkv_hybrid`). Sanity-verified first: forward/backward pass correct,
+gradients reach `decay_proj`, no NaNs.
+
+Trained matched (`rj`/m, seed 57, `attention_layers=(2,)`, same steps/
+patience as every other comparison this round):
+
+| variant | params | best_val |
+|---|---|---|
+| dense (untied baseline) | 940,800 | 3.6623 |
+| RWKV hybrid | 941,184 | 3.5886 |
+| **selective-decay hybrid** | 990,336 | **3.5635** |
+
+Selective decay beats plain RWKV hybrid (3.5635 vs. 3.5886, a real
+0.0251-nat win) and both beat dense, at toy scale, on the first try.
+Honest caveat: not perfectly matched params (selective decay has 49,536
+more, from `decay_proj`'s extra weights on the 3 non-attention blocks) --
+a real, if modest, confound. **Explicitly not attempted, per
+`tasks/core_principle.md`'s small-scale-first rule:** rebuilding the
+cross-chunk BPTT training + KL-divergence retention-eval harness (deleted
+in an earlier repo cleanup) to test whether selective decay actually fixes
+the retention question RWKV failed five-for-five. This first-rung result
+is promising enough to justify that larger investment as a deliberate next
+step -- not promising enough to skip straight to it without this check,
+which is exactly the point of the rule just written down.
+
+**Scaling-law simulation tool built, and it reversed the selective-decay
+verdict above -- exactly the failure mode it exists to catch.** User's top
+priority: a genuine way to "simulate large scale" cheaply rather than
+guess from one toy point. `src/fit_scaling_law.py` fits `L(N) = a *
+N^(-alpha)` via log-log linear regression (Kaplan et al. 2020; Hoffmann et
+al./Chinchilla 2022) -- verified first against a synthetic known power law
+(recovers `a=10, alpha=0.3` exactly) before trusting it on real data.
+
+**Real training use of `spm_32768_balanced.model`, without a production
+retrain** (per the user's explicit choice not to retrain anything this
+round): `src/run_scaling_sweep.py`, 12 configs -- 2 sizes (`xs`, `s`,
+deliberately the cheapest presets) x 3 domains (`rj`, `code_core`,
+`terminal` -- the last two via direct `data._tokenize_corpus` calls,
+bypassing `load_lm_corpus`'s fixed domain set rather than changing it) x 2
+architectures (RWKV-hybrid, selective-hybrid; dense excluded, already
+well-established as losing to hybrid). `--embedding-rank 32` throughout so
+vocab=32768's embedding table doesn't dwarf `xs`'s tiny block stack; the
+fit uses **block-stack-only params**, not total params, as `N`, for
+exactly that reason.
+
+| domain | size | rwkv best_val | selective best_val |
+|---|---|---|---|
+| rj | xs | 6.7824 | 6.7875 |
+| rj | s | 6.7171 | **6.7600** |
+| code_core | xs | 7.1058 | **7.0876** |
+| code_core | s | **7.0639** | 7.1187 |
+| terminal | xs | 5.6461 | **5.6218** |
+| terminal | s | **5.6093** | 5.6448 |
+
+**The pattern that matters: selective decay leads at `xs` on 2 of 3
+domains, then loses on all 3 at `s`.** Its relative edge shrinks or
+reverses as capacity grows even slightly -- the opposite of what would be
+needed to justify scaling it up further. Fitted extrapolation (10x past
+`s`'s block-stack size) picks RWKV as the winner on **all three domains**:
+
+| domain | rwkv alpha | selective alpha | winner |
+|---|---|---|---|
+| rj | 0.00545 | 0.00227 | rwkv |
+| code_core | 0.00333 | **-0.00245** | rwkv |
+| terminal | 0.00368 | **-0.00228** | rwkv |
+
+Selective decay's fitted `alpha` is *negative* on both `code_core` and
+`terminal` -- its own fit says loss gets *worse*, not better, with more
+capacity in this range, while RWKV's stays (barely) positive on all three.
+
+**FINAL VERDICT: promote selective decay = False.** This reverses last
+round's tentative recommendation, which was based on a single (vocab=1024,
+"m"-size, `rj`-only) point that happened to favor it. That's precisely
+the failure mode this tool and the multi-domain decision rule exist to
+catch -- and did.
+
+**Honest limitations, not hidden:** only 2 size points per curve (a
+secant slope, not a robust regression), and both are very close together
+in absolute capacity (25K-158K block-stack params) against a vocab=32768
+softmax whose entropy floor likely still dominates the loss at this
+scale -- every fitted `alpha` is tiny (near-flat), consistent with the
+project's own repeated Chinchilla-ratio theme (still deep in an
+undertrained-relative-to-vocab regime, not yet in a capacity-limited one).
+The *direction* of the reversal (xs favors selective, s favors RWKV, on
+the identical domains) is a real, structural signal regardless of the
+extrapolation's precision -- but a firm verdict at true production scale
+would need `m`/`l` points too, where the block stack has enough capacity
+to actually separate from the vocab floor. Not done this round, per the
+same resource-conscious choice that kept this sweep to `xs`/`s`. Peak RSS
+for the full 12-run sweep: 3,516.8MB.
+
+**Explicit non-decision, unchanged:** no checkpoint was retrained this
+round. The new tokenizer got its first real training use (this sweep) but
+`code_base_xl_rwkv_rank64`/`text_base_xl_rwkv_rank64`/`rj_base_m*` are
+still on `spm_32768.model`. Selective decay is not recommended for
+promotion at this scale -- the next production retrain, whenever it
+happens, should use RWKV (unchanged) + the new tokenizer, not selective
+decay.
+
+**Three follow-ups this round: halting+tokenizer combined, a genuinely new
+mechanism (confidence-gated width), and selective decay restricted to
+attention-adjacent layers.** All toy-scale, resource-conscious as asked;
+two of the three reuse existing validated pieces rather than re-deriving
+them.
+
+**Part 1: halting under the new tokenizer.** Single-variable change from
+the recorded `rj_base_m_halt_seed57` result (vocab=1024, dense,
+best_val=3.7639): rerun identical (`rj`/m/dense) with `--tokenizer-variant
+balanced --vocab-size 32768` (no `--embedding-rank`, so the plain tied
+embedding grows to 4,194,304 params -- a real, expected cost of the
+32x-bigger vocab, not a bug; total `n_params=5,004,548`). **best_val=5.7857
+-- not directly comparable to 3.7639** (vocab=32768's much higher entropy
+floor, consistent with the scaling sweep's own 5.6-7.1 range at this
+vocab). `eval_halting.py` against the new checkpoint: `full_depth_accuracy`
+craters to 0.4% (2/500 samples) -- far too sparse for the accuracy-delta
+metric to mean anything at this vocab/scale, unlike the cleaner vocab=1024
+result. What *does* still look sensible: per-layer confidence (0.60 ->
+0.80 -> 0.78 -> 1.0) and agreement-with-final-layer (0.376 -> 0.794 ->
+0.874 -> 1.0) both still rise with depth, roughly monotonically --
+the halting head is still learning something real about the model's own
+depth-wise confidence trajectory, even though "is the final answer
+correct" is too rare an event here to validate the compute/accuracy trade
+the way the vocab=1024 result did. Honest verdict: inconclusive, not
+negative -- the mechanism's internal signal still looks coherent; the
+validation metric itself needs more training or a bigger model to be
+meaningful at vocab=32768.
+
+**Part 2: confidence-gated width -- a new mechanism, implemented and
+tested for the first time.** `WidthGatedMLP` (`model.py`): same
+`Linear(d,4d) -> GELU -> Linear(4d,d)` shape as the plain MLP, but the
+**second half** of the 4d hidden activations gets scaled by a per-token
+gate `g=sigmoid(Linear(d_model,1)(x))` before the second projection -- the
+first half is always fully active (guaranteed baseline capacity, same
+idea as halting always running at least one block); `TinyGPT.
+width_sparsity_loss()` reads `last_gate_mean` off every width-gated block
+as a side effect (no change to `Block.forward`'s return signature, same
+non-invasive pattern `MoEFFN.last_aux_loss` already uses), and
+`train.py`'s new `WIDTH_SPARSITY_WEIGHT=0.05` is the only pressure pushing
+gates below 1.0. Sanity-verified (forward/backward correct, gate
+gradients flow) before training.
+
+Trained matched exactly against `rj_base_m_seed57`'s baseline (`rj`, m,
+dense, vocab=1024, 940,800 params): width-gated model has 941,316 params
+(516 extra for 4 gate heads), **best_val=3.7242 -- a modest +0.062-nat
+cost**, smaller than halting's +0.10 cost and much smaller than
+`tie_layers`' code-domain cost. The sparsity regularizer worked as
+intended: average gate value on held-out data is 0.163 (mostly closed,
+real sparsity pressure succeeded). **But the width-axis analog of
+halting's "does this correlate with real difficulty" check comes back
+negative:** average gate on correctly-predicted tokens (0.1696, n=119) vs.
+incorrectly-predicted tokens (0.1605, n=381) -- a 0.009 difference,
+noise-level at these sample sizes, not the kind of clear separation
+halting's per-layer confidence showed. **Honest read: the mechanism learns
+to be sparse, but not to be selectively sparse in a way that tracks token
+difficulty** -- a genuinely different (weaker) outcome than halting's
+validated win, not just an untested idea anymore. Worth noting for any
+future attempt: the soft multiplicative gate used here never actually
+skips compute (the second half is still computed, just scaled down), so
+even a working version of this mechanism wouldn't yield real FLOP savings
+without a harder, indexed/sparse implementation -- a further reason this
+is a weaker candidate than halting's literal early-exit.
+
+**Part 3: selective decay restricted to attention-adjacent layers --
+doesn't reverse the verdict, but is genuinely informative.** Generalized
+`use_selective_decay` (all-or-nothing) with `GPTConfig.
+selective_decay_layers: tuple` -- non-empty overrides the boolean with an
+exact layer list; empty (default) preserves today's behavior exactly,
+verified via a direct sanity check (`selective_decay_layers=(1,)` at
+`n_layer=3, attention_layers=(2,)` correctly builds `TimeMixing` at layer
+0, `SelectiveTimeMixing` at layer 1, attention at layer 2). Two new runs
+(`rj`/s and `code_core`/s, same vocab=32768/balanced + embedding_rank=32
+setup as the scaling sweep, `selective_decay_layers=(1,)` -- the one
+non-attention layer directly adjacent to attention), compared directly
+against that sweep's own recorded rows for the identical domain/size:
+
+| domain | rwkv (all layers) | selective (all layers) | adjacent-only |
+|---|---|---|---|
+| rj | 6.7171 | 6.7600 | 6.7640 |
+| code_core | 7.0639 | 7.1187 | **7.0988** |
+
+RWKV still wins both domains. Restricting scope to the attention-adjacent
+layer gives a real, if partial, recovery on `code_core` (closes about half
+the gap between uniform-selective and plain RWKV) but is slightly *worse*
+than uniform selective decay on `rj` (6.7640 vs. 6.7600) -- another
+domain-dependent result, consistent with this whole round's theme.
+**Verdict unchanged from the scaling sweep: selective decay, in any form
+tested so far (uniform or attention-adjacent), does not beat plain RWKV.**
+The remaining untested question is whether a more complete Mamba-2/S6
+implementation (selective B/C, not just decay) would fare differently --
+still open, still bigger than this round's scope.
+
+**Ensemble check (Part A) + a grounded self-training "flywheel" test
+(Part B), both genuinely small this time (`s`-size, 223,808 params, not
+`m`).** User's framing: "what if multiple small models shared outputs to
+build on one another" -- distinct from the already-rejected swarm/MoE
+idea (that needed routing specialization that never materialized,
+JS-divergence 0.0000-0.0002; a plain ensemble needs only decorrelation,
+which the repeat-seed check already showed exists here).
+
+**Part A: probability-averaging 3 fresh, differently-seeded `s`-size
+models (seeds 57/58/59) beats the best single model, on both domains
+tested, in different ways.**
+
+| domain | best-single accuracy | ensemble accuracy | best-single NLL | ensemble NLL |
+|---|---|---|---|---|
+| `rj` | 0.212 | 0.210 (flat) | 3.817 | **3.7357** (real win) |
+| `code` | 0.166 | **0.174** (real win) | 4.4661 | **4.4529** (real win) |
+
+On `rj`, top-1 accuracy doesn't move but calibration (NLL) genuinely
+improves -- the ensemble doesn't change which token wins, but its
+probability estimates are measurably better, which matters more for
+Ducky's own confidence-gated design than raw accuracy does. On `code`,
+both metrics improve. New `eval_ensemble.py` (probability-averaging, not
+logit-averaging -- the correct way to combine independently-calibrated
+models) is reusable for any future N-model comparison.
+
+**Part B: the flywheel produced a real methodological finding before it
+produced a real result.** Round 0 baseline (`bench_ducky.py`, greedy,
+ensemble and all 3 single members): **0/10**, matching the historical
+pattern at this scale exactly. Generation+verification (5 resampled
+ensemble candidates per task, temperature=0.8, "share outputs" realized
+literally -- every token decision already blends all 3 models'
+probabilities, not decided by one model and handed to the next): Tier 1
+(real assert pass) found 0; Tier 2 (`verify_code_syntax` +
+`check_call_arity_consistency`) found 6/10 -- looked like real, usable
+fuel.
+
+**It wasn't.** Reading the actual pooled text before retraining on it
+(never skip this step) showed all 6 "verified" examples were comment-only
+gibberish after the docstring (e.g. `# # 0 input_es = None: # Cestr_cont:
+the # """ any for a...`) -- `verify_code_syntax` passed them because a `#`
+line produces no AST node at all and isn't a syntax error, and
+`check_call_arity_consistency` trivially reports no conflict when there
+are zero function calls to check. **"Parses" was never the same claim as
+"contains real code," and the gate was accidentally checking the former
+while believed to be checking the latter.** Fixed with a new,
+genuinely-reusable grounding signal: `grounding.has_real_statement` --
+does the function body contain at least one statement beyond its own
+docstring (rules out comment-degenerated and bare-`pass` "bodies").
+Regenerated with the corrected gate (Tier 2 now requires
+`verify_code_syntax AND has_real_statement`): **0 Tier-1, 0 Tier-2, 0
+total verified fuel.** No retrain was performed -- there was nothing to
+retrain on.
+
+**Honest verdict: the flywheel has nothing to spin on at this scale, once
+verification is actually checking what it claims to.** Consistent with
+this project's most repeated finding -- reasoning/bootstrapping scaffolding
+amplifies existing capability, it cannot manufacture capability the base
+model doesn't have, and at `s`-scale (223,808 params) on code, there isn't
+yet real capability to bootstrap from. This is a stronger, more honest
+version of that same conclusion than the mcts_lite/repair_loop/resample
+round reached, because this time the verification gate that would have
+said otherwise was caught and fixed before being trusted, not after.
+**Net result of this whole round: ensembling (Part A) is a real, modest,
+reusable win; a self-training flywheel (Part B) is not viable yet at this
+scale, and the honest reason why is now backed by a corrected grounding
+signal available for future use.**
+
+**Trained code's model to its Chinchilla-matched "minimum viable" size --
+real data, real tokenizer, real result.** Direct follow-up to "how does
+the flywheel scale": the identified prerequisite was a real model past
+zero capability, reached by matching params to the *actual* data budget,
+computed rather than guessed, and done safely under an explicit
+resource constraint.
+
+**Safe tokenization first, given a real prior close call.** This session
+already hit a ~19.5GB transient RSS spike once, tokenizing a large corpus
+under a new tokenizer identity for the first time in one `encode()` call.
+`corpus_breadth.txt` (167,234,835 bytes) had never been tokenized under
+`spm_32768_balanced.model` -- new `safe_tokenize_breadth.py` streams it in
+~10MB line-bounded chunks instead, encoding each separately and
+concatenating token-id lists. **Result: peak RSS 2,917.9MB** -- an order
+of magnitude safer than the earlier spike, confirming the chunked
+approach directly rather than assuming it would help.
+
+**Real numbers, not estimates, drove the config.** Combined real code
+corpus (`corpus_core.txt` + `corpus_breadth.txt`) under the balanced
+tokenizer: **43,263,940 tokens** (2,528,834 + 40,735,106) -- close to the
+~52M-token ceiling already recorded elsewhere in this file. Chinchilla-
+optimal (20 tokens/param): **2,163,197 params**. Searched real
+`GPTConfig`s (not guessed) for a close match:
+**d_model=128, n_layer=6, n_head=4, embedding_rank=32, RWKV hybrid,
+attention_layers=(5,)** -> **2,259,584 total params** (within 4.5% of
+the target), same `d_model=128` shape as every `"m"`-family toy
+comparison this session, just deeper and with a wider factored-embedding
+rank for the real 32768 vocab.
+
+**Trained one model** (not an ensemble -- this round was about size, not
+re-litigating Part A), `--dataset code --tokenizer-variant balanced`,
+weighted `code_core`/`code_breadth` sampling (existing
+`load_weighted_code_corpus`, same as every production code run), step
+ceiling 11,000 with patience=6. **Took ~2.3 hours wall-clock -- longer
+than the ~25-50 minute estimate**, because the estimate was extrapolated
+from toy `"s"`/`"m"`-size dense/small-vocab runs and under-weighted RWKV
+hybrid's real per-step recurrence overhead (already documented elsewhere
+in this file as 2-3x dense's per-step cost) compounding with the bigger
+vocab/embedding-rank compute at this size. Peak RSS stayed healthy and
+stable throughout (checked directly at multiple points: 2.75GB -> 2.3GB
+-> 2.85GB -> 1.75GB, normal fluctuation, no growth trend) -- the resource
+constraint was respected in practice, not just in the plan.
+
+**Result: n_params=2,259,584, best_val=3.6779, best_step=11000 (the full
+ceiling -- patience never triggered, meaning it was still improving when
+the budget ran out, an honest caveat: this may not be the true best
+achievable within this data/param budget, just the best found within this
+step budget).** For comparison: the toy vocab=32768 scaling-sweep points
+(`xs`/`s`, 25,440-158,272 block-stack params, same tokenizer) scored
+5.6-7.1 on the same kind of loss. **This model, with meaningfully more
+(but still Chinchilla-modest) capacity matched to the real data volume,
+scores 3.6779** -- a dramatic improvement, direct, measured evidence for
+the Chinchilla-ratio thesis this whole project has repeated: matching
+params to data moves the needle far more than any architecture change
+tested this session.
+
+**`bench_ducky.py`: still 0/10, but a real, qualitative step up in
+*how* it fails.** New `eval_chinchilla_min.py` (greedy decode,
+no-repeat-ngram blocking, same discipline as every other generation path
+this project uses). Every completion is now built from genuinely
+plausible Python idioms -- `isinstance(n, (int, int))`-style type checks,
+`raise ValueError(f"Expected {x}...")`-style error handling, `np.array`/
+`np.sqrt`-style calls -- not gibberish, not single-token fragments, not
+comment noise. What fails: malformed f-strings (unterminated), unbalanced
+brackets, and generation drifting past the intended function's natural
+end into unrelated new `def`s. **This is the same "coherent but not yet
+capable" pattern already documented in this file for the much bigger
+production xl checkpoint (11.6M+ params) -- reached here at 2,259,584
+params, roughly 5x fewer**, via matching size to real data rather than
+brute-force scale. Genuine, measured evidence that Chinchilla-matching is
+a more efficient path to fluency than just training a bigger
+arbitrarily-sized model on the same data.
+
+**Honest framing, not overclaimed:** this is still 0/10 on the strict
+pass/fail metric this project has always reported honestly, and
+`max_new_tokens=48` cutting generation off mid-structure is a real,
+uncontrolled confound in some of these completions (some "drift into a
+new def" failures may be generation running past where a real function
+would have naturally ended, not a distinct failure mode). Not retested at
+a longer generation budget this round -- a cheap, natural follow-up.
+
+**Follow-up round: a self-distillation "dreaming" phase (real negative,
+directly confirming a named risk) + 3 actionable weakness fixes.**
+
+**Part A: self-distillation dreaming made things worse, and probably for
+the reason the plan warned about before running it.** New
+`run_dreaming.py`: a frozen teacher (last round's Chinchilla-matched
+checkpoint) generates 30 "dreamed" continuations (temperature=0.8,
+no-repeat-ngram blocking) from real 40-token seed contexts, and a student
+copy is trained via KL-divergence to match the teacher's own *softened*
+(temperature=2.0, Hinton et al. 2015) distribution on those dreams --
+Furlanello et al. 2018's Born-Again Networks pattern, adapted to use
+self-generated rather than real re-labeled data. No hard pseudo-labels,
+no verification gate needed (unlike the flywheel), since the target is
+the teacher's own smoothed belief, not a ground-truth claim.
+
+**Result: held-out loss got measurably *worse* (4.0813 -> 4.2888, +0.2075
+nats), `bench_ducky.py` stayed 0/10 -> 0/10.** Plausible, specific cause:
+400 distillation steps drawn from only 30 dream sequences means each
+sequence was revisited ~107 times on average (400*8/30) -- the student
+almost certainly overfit to a narrow, repetitive, self-generated set
+rather than genuinely "consolidating" anything. This is a small-scale,
+direct confirmation of exactly the risk this file's own architecture-
+critique section named before this experiment ran (Shumailov et al. 2024,
+"The Curse of Recursion," arXiv:2305.17493) -- even one modest round of
+self-training on a narrow self-generated set measurably degrades general
+performance, not just at the large scales that paper studied. **Honest
+verdict: this specific dreaming design doesn't work at this scale/
+configuration.** A natural, cheap follow-up (not done this round): far
+more dream diversity (hundreds, not 30) relative to distillation steps,
+so no single dreamed sequence dominates training -- untested, not assumed
+to fix it.
+
+**Part B2: stopping criterion for generation -- implemented correctly,
+and it directly falsified last round's "over-generation" theory.** New
+`grounding.is_complete_statement` (parses + a blank line just emitted --
+neither alone is a real signal, together they're a checkable proxy for
+"this looks done"), wired into `generate_with_grounding` as
+`stop_when_complete` (default on). Tested two ways: through `Ducky.ask()`'s
+real confidence-gated path, abstention already cuts every generation
+short (4-40 tokens) before the new check ever gets a chance to fire.
+Through the plain greedy decode that originally showed the "drift into an
+unrelated `def`" pattern: **`stopped_complete=False` on all 10
+`bench_ducky.py` tasks** -- the model never reaches a valid-parse-plus-
+blank-line state within the 48-token budget. This directly rejects the
+hypothesis that some 0/10 failures were near-misses corrupted by
+over-generation: the completions are syntactically broken throughout,
+not valid-but-overrun. A real, useful, correctly-implemented mechanism
+that isn't the fix for the current gap -- confirms the gap is genuinely
+about capability, stated more precisely than before.
+
+**Part B3: grounding-signal audit -- one function already honestly
+scoped, one had a real, previously-unnoticed gap.** Tested both remaining
+signals against real adversarial input, not just reasoned about them.
+`check_call_arity_consistency`: correctly returns "consistent" for both
+the comment-garbage text and any code with zero function calls -- but its
+own docstring already discloses this ("can only flag inconsistency, never
+confirm correctness") -- not a hidden bug, an honestly-scoped limitation.
+`identifier_grounded`: tested against the *real* symbol table (22,537
+identifiers from `corpus_core.txt`) and found single-letter identifiers
+(`x`, `a`, `n`, ...) present near-universally -- `identifier_grounded(
+"return x", real_symtable)` was `True` regardless of whether anything
+meaningful was verified, while a genuinely novel identifier
+(`flatten_one_level`) correctly failed. **Fixed with a `min_length=3`
+threshold** (verified: single letters now correctly return `False`,
+specific identifiers unaffected) -- the check is well-calibrated for
+specific/rare identifiers and was silently meaningless for generic short
+ones.
+
+**Part B4: two real bugs fixed, both blocking already-validated work from
+being usable through the actual SDK, not new features.**
+1. `Ducky.__init__` read `cfg_dict["vocab_size"]` but never
+   `cfg_dict.get("tokenizer_variant", "")` -- meant
+   `Ducky(run_name="code_base_chinchilla_min_rwkv_rank32_tokbalanced")`
+   would have silently loaded the *wrong* tokenizer (`spm_32768.model`
+   instead of `spm_32768_balanced.model`), the identical bug class already
+   fixed once this session for the legacy pre-versioning case. Fixed;
+   verified end-to-end (`d.tok.cache_key == "32768_balanced"`, real `ask()`
+   output). Also registered `"chinchilla_min"` as a permanent `SIZES`
+   preset in `train.py` (was only a runtime monkey-patch before) and
+   corrected that file's own now-outdated comment claiming `"xl"` was
+   "already reasonably matched" to code's real data ceiling -- it isn't,
+   by about 5x.
+2. **`EnsembleModel`** (new class, `ducky.py`): wraps N loaded checkpoints
+   behind the identical `model(idx) -> (logits, extra_logits, aux_loss,
+   new_states)` call contract `TinyGPT` presents, averaging softmax
+   probabilities (`eval_ensemble.py`'s validated approach) before
+   returning log-probs as "logits" -- every existing caller
+   (`predict_next`, `self_critique_score`, `calibrate_thresholds`,
+   `add_model_prediction_edges`, and therefore every `generate_with_*`
+   function) needed zero changes, since they only ever call `model(idx)`
+   and read `model.cfg.block_size`. New `Ducky.__init__(ensemble_run_names=
+   [...])` param. Verified end-to-end with 3 real seed-varied checkpoints:
+   `EnsembleModel` built correctly, `.ask()` worked through the full
+   graph/threshold/generation pipeline unchanged.
+
+## Ducky is a mimicking device: calculator-grounded arithmetic + a
+## step-sequencer alternative, tested honestly
+
+User's framing, stated directly: Ducky mimics, it doesn't compute. Correct,
+and expected -- TinyGPT is cross-entropy-trained next-token prediction,
+nothing in that objective rewards "get the arithmetic right," only
+"produce a plausible continuation." The ask: keep the mimicry for
+reasoning *structure* (which operation, in what order), make the actual
+values real. Investigated `/home/redleadr/workspace/uchi` (the separate,
+more mature project this repo already ports pieces from) before writing
+any code, per the user's explicit "nail the concept first":
+
+- `uchi/predictor.py`'s `UniversalPredictor` -- a non-neural, trie-based
+  Credibility-Weighted Context Tree (CTW-style, multiplicative-weights
+  credibility updates) -- is almost certainly "uchi's old sequence
+  predictor." Genuinely different mechanism from TinyGPT (interpretable,
+  auditable), but still fundamentally a predictor: it recalls/blends
+  patterns already seen, it computes nothing.
+- **uchi's own codebase already tested and rejected this exact predictor
+  for numeric-value judgments, in writing** (`uchi/numeric_plausibility.py`'s
+  docstring): tried reusing it to judge whether a claimed number was
+  plausible; failed, since a static/scattered pool of numeric facts has no
+  temporal order for a sequence predictor to exploit (55 and 50,000 scored
+  equally "surprising"). Real, load-bearing precedent carried into this
+  round: this predictor class must never be the thing producing or
+  validating a numeric value.
+- **uchi's actual "not mimicry" mechanism is `tool_calling.py` +
+  `scratchpad.py`**: a `<|tool_call|> run_python(...)` grammar hands real
+  code to a subprocess-sandboxed interpreter and splices genuine stdout
+  back into the text -- the PAL (Gao et al. 2022, arXiv:2211.10435) /
+  Toolformer (Schick et al. 2023, arXiv:2302.04761) pattern: the model
+  decides *what*/*when* to compute, never emits the digits itself.
+
+User's confirmed scope: pure numeric expressions only (not word problems
+-- no corpus exists, and prose-to-operand parsing is a separate, harder,
+unscoped capability); `UniversalPredictor` gets one cheap test as an
+alternative step-*sequencer* only, never as a value-producer.
+
+### Part A: calculator-grounded generation -- real, strong, and honestly bounded
+
+**Mechanism** (`grounding.py`, `inference.py`), directly extending Ducky's
+own established "verify against something real, abstain otherwise"
+discipline to a new domain, no `model.py` changes at all:
+- `evaluate_arithmetic(expr)`: a restricted AST walker (whitelist
+  `BinOp`/`UnaryOp`/numeric `Constant`, `+-*/**`) -- never `eval()`.
+  Verified it refuses every disallowed construct tried (`__import__(...)`,
+  bare names, calls, attributes, `bool`-as-`int`) by returning `None`, not
+  executing anything; verified correct on real precedence (`12 + 5*3 - 4`
+  -> 23, matches Python's own `eval`).
+- `find_arithmetic_expression`/`arithmetic_grounded`: detect a
+  just-completed literal expression right before `=`, and a post-hoc
+  claim-vs-real check, respectively -- both abstain (`None`) when
+  inapplicable, same convention as `check_call_arity_consistency`.
+- `generate_with_calculator` (`inference.py`): identical token-by-token
+  loop to `generate_with_grounding` (reuses `predict_next`, `SessionTrie`,
+  no-repeat-ngram blocking -- zero duplicated logic), but every time
+  generation completes an expression right before `=`, the model's own
+  digit prediction for the result is skipped entirely: the real value is
+  computed and its tokens are spliced in directly. Records
+  `model_would_have_generated` (a non-deciding peek, for honest
+  before/after comparison) and `splice_verified` (a re-decode self-check
+  for BPE-boundary safety) on every splice.
+
+**Real bug found and fixed while testing, not after**: the first version
+only checked for the trigger *after* a freshly-generated token, so a
+prompt that already ends in "expr =" (e.g. a direct query, or this round's
+own benchmark prompts) could have its intervention point silently skipped
+-- if the tokenizer fuses "=" together with the start of the answer into
+one BPE step, the moment right after a bare "=" never occurs as its own
+check point. Confirmed empirically (not assumed): several benchmark rows
+showed identical plain/calculator output with `n_splices: 0` despite the
+prompt containing a clean expression. Fixed with one additional check
+against the raw prompt before the generation loop starts at all.
+
+**New toy checkpoint** (`train_arithmetic.py`, `runs/arithmetic_base_s_rwkv`):
+new synthetic, real-by-construction corpus (`generate_arithmetic_corpus.py`
+-- 4000 step-by-step reduction traces, real operator precedence,
+cross-validated against Python's own `eval()` on the exact generated
+expression, not just asserted correct). `s`-size RWKV hybrid,
+223,936 params, best_val=0.6130 at step 2600, **peak RSS 1,150MB**. The
+raw sample from training is a perfect, unprompted illustration of the
+exact problem this round targets: `'Step 1: 1 * 3 = 3 Step 2: 3 * 18 = 62
+Step 3: 62 + 8 = 82 ...'` -- flawless step-trace *format*, wrong
+arithmetic on every multi-digit step (`3*18` isn't 62, it's 54).
+
+**Benchmark** (`bench_arithmetic.py`, 20 fresh held-out single-expression
+tasks, seed distinct from training): **plain (mimicry-only) generation:
+45% correct. Calculator-grounded generation: 100% correct.** A real,
+complete fix for the well-posed scope this round committed to.
+
+**Honest boundary, found (not hidden) while building the benchmark**: the
+mechanism guarantees every *individual detected expression* is computed
+correctly -- it does not make the model correctly *carry a prior real
+result forward* as the next step's operand in a freely-generated
+multi-step chain. Manually observed before narrowing the benchmark's
+scope: given only "Step 1:" (no fixed expression), the model invented its
+own operands throughout; the calculator correctly computed whatever
+expression appeared at each step, but a later step's operands sometimes
+had no relation to the previous step's real (correctly-spliced) answer.
+This is a distinct, harder capability (something like "attend to and
+reuse your own prior real output"), honestly out of scope this round --
+the benchmark was deliberately scoped to single, well-posed expressions
+precisely because multi-step chains in this corpus have independently-
+random later operands no model could predict from context anyway.
+
+### Part B: `UniversalPredictor` step-sequencer test -- inconclusive-to-negative, reported honestly
+
+Ported `uchi/predictor.py` verbatim into `src/sequence_predictor.py`
+(dependency-clean, stdlib-only, attributed) per the user's explicit
+request, scoped by the uchi precedent above: tested only as an
+alternative to Ducky's own generation for predicting *which operation
+comes next* in a reduction trace (`ADD`/`SUB`/`MUL`/`DIV`) -- a genuinely
+sequential/categorical question, never a numeric value.
+
+Real structure exists in this task: operator precedence always groups
+all `*`/`/` before all `+`/`-` regardless of the original random draw
+order, so it's not pure noise. `eval_step_sequencer.py` compared
+`UniversalPredictor` against a tiny freshly-trained Ducky model
+(6,736 params) on the identical data/split (3600 train / 400 val
+sequences, from `generate_arithmetic_corpus.py`'s own op-order labels),
+**and, critically, against a majority-class ("always guess ADD")
+baseline** -- essential context, not decoration, since precedence
+grouping alone makes later positions disproportionately ADD/SUB.
+
+**Results: majority-class baseline 43.6% (283/649). `UniversalPredictor`
+40.4% (262/649) -- *below* the trivial baseline. Tiny Ducky 44.8%
+(291/649) -- only +1.2 points above the trivial baseline.** Neither
+predictor demonstrates real sequential learning beyond what a constant
+prediction already captures on this specific task; `UniversalPredictor`
+does measurably worse than guessing. Plausible, stated honestly rather
+than explained away: sequences here are short (1-4 steps) and each is its
+own fresh `.history` context, leaving little room for genuine
+cross-position sequential signal to accumulate before the group-boundary
+structure is already absorbed into the marginal (position-conditioned)
+distribution a trivial baseline exploits for free. **Verdict: this
+specific test doesn't show a case for `UniversalPredictor` over Ducky's
+own generation as a step-sequencer** -- a longer/deeper chain task might
+give a genuinely sequential predictor more room to show an edge, untested
+here, not assumed to change the outcome.
+
+## Three weaknesses, tested small-scale-first -- a new standing rule
+
+Follow-up to "what's preventing Ducky from performing exceptionally
+well" (four weaknesses ranked: scale/data, no internally-grounded
+computation, RWKV retention unexploited, self-improvement doesn't
+substitute for data). **New standing rule, elevated to a hard
+requirement, not just this round's scope** (saved to memory as
+`no_scaleup_without_proof`): never commit to expensive/large training to
+test whether the architecture can produce good results -- always prove
+cheaply, at small scale with representative/diverse data, that the
+architecture (not lack of scale) is the real ceiling, before any
+scale-up is even proposed. Skipped weakness #1 (scale) this round by
+explicit instruction; did the other three.
+
+**#4 (self-improvement) re-evaluated, not re-attempted.** Both dreaming
+and the flywheel were already toy-scale, honest, diagnosed negatives.
+The seemingly-new angle -- Part A's calculator-grounding now makes
+verified-correct arithmetic fuel abundant -- turned out not to add new
+information on inspection: `generate_arithmetic_corpus.py`'s training
+data was already 100% correct by construction, yet the base model still
+only reached 45% plain-mode accuracy (see the arithmetic section above)
+-- that gap is data-efficiency/capacity (weakness #1 again), not
+something self-training on verified data could fix. Folded its one
+genuinely new angle (operand-chain coherence) into the grounded-
+computation work below instead of re-running self-training a third time
+without a new hypothesis.
+
+### Part 1: real execution-based grounding for code
+
+`grounding.verify_code_syntax` only checked `ast.parse` validity --
+"parses" isn't "runs without error." Moved `bench_ducky.py`'s already-
+validated sandboxed-execution primitive (`run_task`: restricted-
+builtins `exec()`, SIGALRM timeout) into `grounding.run_sandboxed`
+(behavior-preserving generalization -- `extra_statements` replaces the
+hardcoded `asserts` param) so it's reusable as a generation-time signal,
+not just this one benchmark's grading mechanism. New
+`grounding.executes_without_error(code)`: `None` if it doesn't parse,
+`True`/`False` (did it raise) otherwise -- the honest middle rung
+between syntax validity and full assert-based grading (no assertions
+exist at generation time). Wired into `generate_with_grounding`'s
+code-domain result dict as `executes`, alongside `syntax_valid`.
+
+**Verified, not assumed**: known-good code -> `True`, code that raises
+-> `False`, syntax-invalid -> `None`, infinite loop -> `False` (times
+out at the configured `timeout_s`) -- all four cases distinguished
+correctly. **Regression check on the refactor itself**: re-ran
+`bench_ducky.py`'s original validation criteria (canned-correct
+solutions for all 10 tasks, a wrong answer, an infinite loop) --
+**10/10, fail, timeout, byte-for-byte identical to Phase L's original
+numbers.** Reran the full benchmark against the real Chinchilla-min
+checkpoint: **0/10, unchanged** from the historical record -- the
+refactor changed nothing about behavior, only where the safety
+primitive lives.
+
+### Part 2: operand-chain coherence for arithmetic
+
+Part A's own honestly-flagged boundary: calculator-splicing guarantees
+each *individual* expression is computed correctly, but the base model
+was never taught to carry a real prior result forward as its own next
+operand, because the original corpus draws every operand independently
+-- there's no chain-continuity signal in the training data at all. New
+`generate_arithmetic_corpus.make_chained_expression`: each step's FIRST
+operand IS the previous step's real result (second operand freshly
+random) -- verified by direct construction check (chain continuity +
+arithmetic correctness cross-checked programmatically across multiple
+generated chains, including division). New corpus
+(`data/arithmetic/chained_*.txt`, 4000 examples) + one toy training run
+(`runs/arithmetic_chained_base_s_rwkv`, 223,936 params, best_val=0.5337
+at step 3000 -- ran the full budget, patience never triggered, unlike
+the original run's 2600-step early stop -- peak RSS 1,135.5MB).
+
+New `bench_arithmetic.bench_chain_coherence`: measures **continuity**
+(does a freely-generated next step's first operand match the real prior
+result) and **final-answer self-consistency** (does the stated
+"Answer: N" match the model's own last real computed step) -- both
+well-posed regardless of which operations the model freely chooses,
+unlike trying to match one predetermined multi-step chain (not
+well-posed here, since later operands are inherently unpredictable from
+context by the corpus's own random-draw design).
+
+**Real methodological bug found and fixed before trusting the first
+result**: there's no stopping criterion for this domain (unlike code's
+`is_complete_statement`), so generation regularly ran past "Answer: N"
+into an unrelated new trace within the same token budget -- the first
+version of the analysis compared a trace's stated answer against a
+*later, unrelated* trace's last step, producing a nonsensical result
+(chained checkpoint looked catastrophically worse than it was). Fixed
+by scoping step extraction to the text up to and including the first
+"Answer:" only.
+
+**Corrected result: original checkpoint -- continuity 90.5% (42
+checked), final-answer self-consistency 89.5% (19 checked). Chained-
+trained checkpoint -- continuity 93.75% (32 checked, +3.25pp, likely
+within noise at this sample size), final-answer self-consistency 65.0%
+(20 checked, -24.5pp).** Doesn't confirm the hypothesis: continuity was
+already fairly high in the ORIGINAL checkpoint without any chain-aware
+training data at all (plausibly a generic "copy the most recently
+written number" pattern learnable from the shared step-trace text
+layout regardless of whether the corpus enforces true chain semantics),
+and the chained corpus's self-consistency was measurably *worse*, not
+better -- an honest, real, negative-leaning result, not the fix Part A's
+flagged gap seemed to call for. Not chased further with additional
+training variants this round (would risk becoming unbounded
+re-attempts without a new hypothesis, the same discipline that ruled
+out re-trying self-improvement above).
+
+### Part 3: RWKV retention via a synthetic associative-recall task -- a sharp capacity cliff, not a data-pressure problem
+
+Five prior BPTT tests on real corpora (rj, code -- Phase M) were all
+negative, diagnosed as "natural data never forces long-range
+dependency." Per the new standing rule: test with data specifically
+*engineered* to require retention, at toy scale, before assuming real-
+corpus scale-up is the missing ingredient -- the standard SSM-literature
+diagnostic (associative recall / induction heads, e.g. Gu & Dao 2023's
+own Mamba diagnostics), not improvised.
+
+New `generate_recall_corpus.py`: custom small integer vocabulary (no
+BPE), sequences `[filler]*L, KEY, VALUE, [filler]*L, QUERY -> predict
+VALUE`. 4-condition sweep (pure RWKV / hybrid x short L=10 / long
+L=100): **every single condition landed at or below chance (10%, 10
+possible VALUE tokens)** -- pure_rwkv/short 0.100, pure_rwkv/long 0.085,
+hybrid/short 0.100, hybrid/long 0.085. n_params 39,936-45,728 (peak RSS
+1,511MB for the sweep).
+
+**A uniformly-at-chance result across every condition, including
+"short," was suspicious enough to distrust before writing it up --
+distrusting your own suspicious-looking negative result is exactly
+this project's own established discipline.** Three real controls run
+before trusting the finding:
+1. **Loss-trajectory check** (3000 steps, 2x the sweep's budget, same
+   config): loss stayed completely flat (~2.59) the entire time, with
+   `recall_accuracy` bouncing at chance (7-14%) throughout -- a genuine
+   plateau, not a slow-but-positive trend that just needed
+   extrapolation.
+2. **Width check** (d_model 32 -> 64, still toy scale): identical flat
+   plateau, ruling out "just too narrow."
+3. **L=0 control** (KEY and QUERY adjacent, zero gap -- the copy task
+   with no recall challenge at all): **100% accuracy within 200 steps.**
+   This is the decisive one -- it proves the task, training loop, loss,
+   and eval logic are all correctly implemented and the mechanism *can*
+   learn the lookup in principle. The L=10/L=100 chance-level results
+   are real, not a setup bug.
+
+**Cliff precisely located**: swept L in {0,1,2,3,5,10} (hybrid,
+d_model=32, 1500 steps each). **Perfect (100%) at L=0,1,2. Collapses to
+chance (13%, 8.5%, 10%) at L=3,5,10.** A sharp cliff between 2 and 3
+intervening filler tokens, not a gradual falloff -- and identical
+regardless of architecture (pure RWKV and hybrid failed identically at
+L=10/100 in the original sweep) or width (32 vs. 64).
+
+**This meaningfully sharpens, not just repeats, the Phase M finding.**
+The earlier "5-for-5 negative, diagnosed as no training pressure on
+natural data" story could always be read as "maybe natural data just
+never needed it." This round's data was built specifically so the task
+*cannot* be solved without retention -- and it still fails almost
+immediately, at a hard capacity wall around 2-3 tokens, regardless of
+width or architecture variant. That's real, controlled evidence pointing
+toward toy-scale capacity itself (not merely lack of data pressure)
+being the bottleneck -- which is exactly the kind of finding that would
+justify testing at real scale next, reached cheaply and diagnostically
+first, per the new standing rule, not assumed or jumped to.
