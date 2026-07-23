@@ -1,0 +1,11 @@
+{
+  "domain": "terminal",
+  "size": "l",
+  "arch": "selective",
+  "seed": 57,
+  "n_params": 6157568,
+  "block_stack_params": 5067520,
+  "best_val": 3.5807482242584228,
+  "best_step": 1100,
+  "wall_s": 49.96
+}

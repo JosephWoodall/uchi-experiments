@@ -1,18 +1,56 @@
 # This Repo's North Star
 
-**Core idea:** Prove, at toy scale and near-zero GPU cost, whether a sparse
-(MoE) unified-tokenizer next-token predictor buys more effective parameters
-per training FLOP than uchi's current dense SSM+BitNet architecture — before
-spending real GPU budget finding out the hard way.
+**Core idea (revised, supersedes the original MoE-vs-dense framing below):
+Ducky becomes the single, unified engine behind both Uchi (FLUX's role —
+text/code reasoning) and Noosphere v2 (the ZOH-SSM stream encoder's role —
+continuous biosignal processing for prosthetic control). One model, one set
+of weights, two production systems currently running separate purpose-built
+engines.** This is now the explicit, standing objective, not a hypothesis to
+be talked out of — it is *how* it gets built, validated toy-scale-first at
+every step exactly like every other architectural claim in this repo's
+history, that stays non-negotiable.
 
-**Why this feels correct:** The obvious move is to just scale FLUX up. But
+**Why this feels correct:** Uchi's FLUX and Noosphere's stream encoder are
+both, underneath very different production wrapping, sequence models over
+tokens/vectors predicting what comes next (text token; continuous 6-DOF
+intent). RWKV's linear-time-mixing recurrence doesn't care what a "token" is
+mathematically — a text ID and a projected EEG sample are both just vectors
+entering the same recurrence. If one shared core can serve both, the payoff
+is real: a single training loop, a single set of weights, and a single place
+that gets better instead of two divergent codebases each needing its own
+tuning forever.
+
+**The immediate prerequisite, not yet met:** neither replacement can happen
+by fiat. Ducky is still 0/10 on `bench_ducky.py` (every measurement this
+entire project, including post-scale-up) — it cannot yet replace FLUX at
+even the text-only task. And no evidence yet exists that a ~17-20M-param
+shared core retains competence on both text and continuous biosignal
+prediction simultaneously — real successful shared-weight generalist models
+(Gato, Reed et al. 2022, arXiv:2205.06175; PaLM-E, Driess et al. 2023,
+arXiv:2303.03378) operate at 100M-1B+ params, not this repo's toy scale.
+Both of these get closed by evidence, not by skipping the check — see
+`tasks/todo.md` Phase V for the two-track plan (Uchi track gated on
+`bench_ducky.py`; Noosphere track gated on a cheap toy shared-vs-separate
+loss comparison, entirely off Noosphere's safety-critical production path
+until that comparison produces a real number).
+
+**Original core idea (Phase A-U's stated goal, kept for record — largely
+answered, superseded by the above as the repo's live objective):** Prove, at
+toy scale and near-zero GPU cost, whether a sparse (MoE) unified-tokenizer
+next-token predictor buys more effective parameters per training FLOP than
+uchi's current dense SSM+BitNet architecture — before spending real GPU
+budget finding out the hard way.
+
+**Why that felt correct:** The obvious move is to just scale FLUX up. But
 dense compute scales linearly with parameter count — on a single consumer
 GPU, that linearly caps how many parameters you can ever afford to train.
 Mixture-of-Experts decouples total parameters from active-compute-per-token:
 the same FLOP budget buys a larger model, *if* there are enough tokens per
 expert for routing to specialize. That "if" is exactly what a toy-scale
 experiment (one book, one small code corpus) can cheaply falsify before it
-costs a real GPU-week to find out.
+costs a real GPU-week to find out. **Verdict, from `tasks/todo.md`'s
+Backlog section: MoE lost to dense at every tested point — this question is
+answered, not open.**
 
 **State-of-the-art grounding:**
 - Scaling laws: Kaplan et al. 2020 (arXiv:2001.08361), Hoffmann et al. 2022 /
@@ -47,12 +85,20 @@ costs a real GPU-week to find out.
    the correct production answer and is out of scope here; this repo only
    tests whether factuality-aware training complements it.
 
-**Non-negotiable scope discipline:** MoE, multimodal fusion, and factuality
-training are backlog items, gated behind one thing — a working dense,
-CPU-only, single-modality scaling-law harness. Any experiment here that
-can't trace back to "does this move the params-per-FLOP or
-verified-accuracy needle, measured on toy data" is scope creep. Drift from
-this triggers a re-plan, not a bigger experiment.
+**Non-negotiable scope discipline (revised):** Ducky-as-unified-engine
+(replacing FLUX in Uchi, replacing the ZOH-SSM stream encoder in Noosphere)
+is now the live objective, not backlog — but it is still gated exactly like
+every other claim in this repo: no production swap and no joint multimodal
+training run happens ahead of a cheap toy-scale result proving it should.
+Concretely (`tasks/todo.md` Phase V): the Uchi swap is gated on
+`bench_ducky.py` clearing 0/10; the Noosphere swap is gated on a toy
+shared-vs-separate-baseline loss comparison, run entirely off Noosphere's
+safety-critical production path. MoE and factuality-training-alone remain
+answered-not-open (see verdicts above/in `tasks/todo.md`'s Backlog). Any
+step taken toward the unified-engine goal that skips its gate, or that
+touches Noosphere's actual safety-gated code before its gate clears, is
+scope creep against this document, not progress. Drift from this triggers a
+re-plan, not a bigger experiment.
 
 **Standing methodology: small-scale-first, always.** Every architectural
 idea proves itself at toy scale — `xs`/`s`/`m` preset, `rj` domain (or a

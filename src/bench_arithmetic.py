@@ -21,7 +21,6 @@ from pathlib import Path
 
 import torch
 
-from graph import TokenGraph
 from grounding import evaluate_arithmetic
 from inference import generate_with_calculator, generate_with_grounding
 from model import GPTConfig, TinyGPT
@@ -120,7 +119,7 @@ def make_chain_tasks(n: int, seed: int) -> list:
     return tasks
 
 
-def bench_chain_coherence(model, tok, graph, n_tasks: int = N_TASKS, max_new_tokens: int = 60) -> dict:
+def bench_chain_coherence(model, tok, n_tasks: int = N_TASKS, max_new_tokens: int = 60) -> dict:
     """Does calculator-grounded free-running generation carry a real prior
     result forward as the NEXT step's own first operand, and does its
     stated final answer match its own last real computation? Both
@@ -134,8 +133,7 @@ def bench_chain_coherence(model, tok, graph, n_tasks: int = N_TASKS, max_new_tok
     n_final_checked, n_final_ok = 0, 0
     rows = []
     for prompt in prompts:
-        r = generate_with_calculator(model, tok, graph, prompt, max_new_tokens,
-                                      fast_threshold=1.1, abstain_threshold=0.0, slow_abstain_threshold=0.0)
+        r = generate_with_calculator(model, tok, prompt, max_new_tokens)
         full_text = prompt + " " + r["generated_text"]
         steps, answer = analyze_chain(full_text)
         for i in range(1, len(steps)):
@@ -160,7 +158,6 @@ def bench_chain_coherence(model, tok, graph, n_tasks: int = N_TASKS, max_new_tok
 
 def main():
     model, tok = load_checkpoint()
-    graph = TokenGraph()  # no graph coverage for this toy domain -- pure neural + splice
     tasks = make_tasks(N_TASKS, BENCH_SEED)
 
     plain_correct = 0
@@ -168,10 +165,8 @@ def main():
     rows = []
     for t in tasks:
         prompt = f"Step 1: {t['expr']} ="
-        r_plain = generate_with_grounding(model, tok, graph, prompt, 12, "arithmetic",
-                                           fast_threshold=1.1, abstain_threshold=0.0, slow_abstain_threshold=0.0)
-        r_calc = generate_with_calculator(model, tok, graph, prompt, 12,
-                                           fast_threshold=1.1, abstain_threshold=0.0, slow_abstain_threshold=0.0)
+        r_plain = generate_with_grounding(model, tok, prompt, 12, "arithmetic")
+        r_calc = generate_with_calculator(model, tok, prompt, 12)
         plain_ok = grade(r_plain["generated_text"], t["expected"])
         calc_ok = grade(r_calc["generated_text"], t["expected"])
         plain_correct += plain_ok
@@ -190,14 +185,13 @@ def main():
     print("=== single-expression benchmark (original checkpoint) ===")
     print(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=2))
 
-    graph = TokenGraph()
     print("\n=== chain coherence, original (independent-operand) checkpoint ===")
-    orig_chain = bench_chain_coherence(model, tok, graph)
+    orig_chain = bench_chain_coherence(model, tok)
     print(json.dumps({k: v for k, v in orig_chain.items() if k != "rows"}, indent=2))
 
     chained_model, chained_tok = load_checkpoint(CHAINED_RUN_DIR)
     print("\n=== chain coherence, chained-trained checkpoint ===")
-    chained_chain = bench_chain_coherence(chained_model, chained_tok, graph)
+    chained_chain = bench_chain_coherence(chained_model, chained_tok)
     print(json.dumps({k: v for k, v in chained_chain.items() if k != "rows"}, indent=2))
 
     return {"single_expression": result, "chain_original": orig_chain, "chain_chained_trained": chained_chain}

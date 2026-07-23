@@ -213,11 +213,18 @@ def add_user_correction(graph: TokenGraph, context_last_token: int, correct_toke
                     confidence=1.0, provenance="user_correction")
 
 
-def build_graph(tok, code_source: str, rj_ids, code_ids) -> TokenGraph:
+def build_graph(tok, code_source: str, *id_tensors) -> TokenGraph:
+    """AST-fact edges from code_source (skipped if empty -- no code corpus
+    in scope) plus co-occurrence edges from every id tensor passed in.
+    Generalized from a hardcoded (rj_ids, code_ids) pair so a single-corpus
+    caller (Ducky's current text-only focus) isn't forced to invent a
+    second, unused corpus just to satisfy the signature.
+    """
     graph = TokenGraph()
-    for src, tgt, meta in build_ast_fact_edges(tok, code_source):
-        graph.add_edge(src, tgt, **meta)
-    for ids in (rj_ids, code_ids):
+    if code_source:
+        for src, tgt, meta in build_ast_fact_edges(tok, code_source):
+            graph.add_edge(src, tgt, **meta)
+    for ids in id_tensors:
         ids = ids.tolist() if hasattr(ids, "tolist") else ids
         for src, tgt, meta in build_cooccurrence_edges(ids):
             graph.add_edge(src, tgt, **meta)

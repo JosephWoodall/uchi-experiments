@@ -86,6 +86,118 @@ def load_lm_corpus(name: str, tok: Tokenizer, val_frac: float = 0.1):
     return ids[:-n_val], ids[-n_val:]
 
 
+def load_weighted_rj_corpus(tok: Tokenizer, val_frac: float = 0.1, include_code: bool = False):
+    """Romeo & Juliet ('rj', ~26K words), a small curated natural-dialogue
+    set ('conversation', ~6.5K words), and optionally the curated stdlib
+    code corpus ('code', corpus_core.txt, ~1.16M words) as separate
+    weighted pools, not one concatenated corpus -- same reasoning as
+    load_weighted_code_corpus's core/breadth split: naive concatenation
+    would make rj and conversation a rounding error against code's much
+    larger raw volume. conversation_corpus.txt is hand-written
+    (User:/Ducky: turns, matching rj's own "NAME: dialogue" structure),
+    not scraped; corpus_core.txt is this project's existing hand-picked
+    stdlib extraction, not newly scraped either -- same "one deliberate
+    input" discipline throughout. Returns {"rj": (train, val),
+    "conversation": (train, val), "code": (train, val)} for
+    get_weighted_code_batch (generic despite the name -- no code-specific
+    logic in it, reused as-is). conversation is opt-in (only if
+    conversation_corpus.txt exists); code is opt-in via include_code,
+    since it's a much bigger pool that only makes sense once rj+
+    conversation's own mechanism is validated (tasks/ducky.md Phase AH).
+    """
+    rj_path = ROOT / "data" / "text" / "romeo_and_juliet.txt"
+    conv_path = ROOT / "data" / "text" / "conversation_corpus.txt"
+    rj_ids = _tokenize_corpus(tok, "rj", rj_path.read_text())
+    n_val_rj = int(len(rj_ids) * val_frac)
+    pools = {"rj": (rj_ids[:-n_val_rj], rj_ids[-n_val_rj:])}
+    if conv_path.exists():
+        conv_ids = _tokenize_corpus(tok, "conversation", conv_path.read_text())
+        n_val_conv = int(len(conv_ids) * val_frac)
+        pools["conversation"] = (conv_ids[:-n_val_conv], conv_ids[-n_val_conv:])
+    if include_code:
+        code_path = ROOT / "data" / "code" / "corpus_core.txt"
+        code_ids = _tokenize_corpus(tok, "code_core_rj_mix", code_path.read_text())
+        n_val_code = int(len(code_ids) * val_frac)
+        pools["code"] = (code_ids[:-n_val_code], code_ids[-n_val_code:])
+    return pools
+
+
+def _tokenize_corpus_lazy(tok: Tokenizer, name: str, text_fn) -> torch.Tensor:
+    """Same cache-first contract as _tokenize_corpus, but text_fn is only
+    called on a cache miss -- _tokenize_corpus itself takes a plain str,
+    so calling it directly with e.g. gutenberg_path.read_text() would
+    read the whole 1.3GB file into memory eagerly on every call, even
+    when the cache already exists (as it does here -- these pools were
+    all safely chunk-tokenized ahead of time). Only meant for pools
+    expected to already be cached; a genuine miss on the "literary" pool
+    would still need safe_tokenize_literary.py run first, not a raw
+    encode() call here, so text_fn existing at all is a safety net for
+    the smaller pools, not an invitation to skip the safe path.
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = CACHE_DIR / f"{name}_{tok.cache_key}.pt"
+    if cache_path.exists():
+        return torch.load(cache_path)
+    ids = tok.encode(text_fn())
+    t = torch.tensor(ids, dtype=torch.long)
+    torch.save(t, cache_path)
+    return t
+
+
+def load_scale_up_corpus(tok: Tokenizer, val_frac: float = 0.1):
+    """The real scale-up mix (tasks/ducky.md Phase AI/AJ): six weighted
+    pools. 'rj' and 'gutenberg' are now SEPARATE pools (Phase AJ; used to
+    be one combined 'literary' pool, but that let general Gutenberg prose
+    dilute rj's own specifically dramatic voice -- splitting them lets rj
+    be upweighted on its own, same fix as the tokenizer's own stratified-
+    resampling fix for the identical dilution problem). Gutenberg
+    deliberately excludes chat_corpus.txt -- an explicit quality decision,
+    not a volume one. 'conversation' is the curated set (grown in Phase
+    AJ); 'code_core'/'code_breadth' are this project's existing stdlib/
+    site-packages split. 'noosphere' is a sixth pool: real production
+    PyTorch/signal-processing code (~908KB, 23.4K lines) pulled from a
+    separate sibling project (workspace/noosphere v1 RS-S4 BCI classifier +
+    v2 digital-twin agent) -- genuine, coherent, sophisticated code by the
+    same author, distinct in style from both corpus_core (stdlib) and
+    corpus_breadth (site-packages internals). All six were safely,
+    chunk-tokenized ahead of time under this exact tokenizer (safe_tokenize_
+    gutenberg-only pass, rj/conversation/noosphere tokenized directly --
+    small enough not to need chunking, code_core/code_breadth via
+    safe_tokenize_breadth.py-style chunking) -- this function only ever
+    reads those already-cached tensors, never a raw uncached encode() call
+    on anything large. Returns {"rj": (train, val), "gutenberg": (train,
+    val), "conversation": (train, val), "code_core": (train, val),
+    "code_breadth": (train, val), "noosphere": (train, val)} for
+    get_weighted_code_batch.
+    """
+    rj_path = ROOT / "data" / "text" / "romeo_and_juliet.txt"
+    gutenberg_path = ROOT / "data" / "text" / "gutenberg_corpus.txt"
+    conv_path = ROOT / "data" / "text" / "conversation_corpus.txt"
+    core_path = ROOT / "data" / "code" / "corpus_core.txt"
+    breadth_path = ROOT / "data" / "code" / "corpus_breadth.txt"
+    noosphere_path = ROOT / "data" / "code" / "corpus_noosphere.txt"
+
+    rj_ids = _tokenize_corpus(tok, "rj", rj_path.read_text())
+    gutenberg_ids = _tokenize_corpus_lazy(tok, "gutenberg_only", lambda: gutenberg_path.read_text())
+    core_ids = _tokenize_corpus_lazy(tok, "code_core", lambda: core_path.read_text())
+    breadth_ids = _tokenize_corpus_lazy(tok, "code_breadth", lambda: breadth_path.read_text())
+    conv_ids = _tokenize_corpus(tok, "conversation", conv_path.read_text())
+    noosphere_ids = _tokenize_corpus(tok, "noosphere", noosphere_path.read_text())
+
+    def _split(ids):
+        n_val = int(len(ids) * val_frac)
+        return ids[:-n_val], ids[-n_val:]
+
+    return {
+        "rj": _split(rj_ids),
+        "gutenberg": _split(gutenberg_ids),
+        "conversation": _split(conv_ids),
+        "code_core": _split(core_ids),
+        "code_breadth": _split(breadth_ids),
+        "noosphere": _split(noosphere_ids),
+    }
+
+
 def load_weighted_code_corpus(tok: Tokenizer, val_frac: float = 0.1):
     """Stdlib ('core'), site-packages libraries ('breadth'), and synthetic
     relational statements ('synthetic') as separate tensors, not one

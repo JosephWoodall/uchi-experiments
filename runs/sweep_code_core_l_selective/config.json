@@ -1,0 +1,11 @@
+{
+  "domain": "code_core",
+  "size": "l",
+  "arch": "selective",
+  "seed": 57,
+  "n_params": 6157568,
+  "block_stack_params": 5067520,
+  "best_val": 5.044855785369873,
+  "best_step": 2000,
+  "wall_s": 71.36
+}

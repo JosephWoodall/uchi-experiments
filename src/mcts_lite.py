@@ -30,7 +30,7 @@ import math
 import torch
 
 from grounding import self_critique_score, verify_code_syntax
-from inference import ABSTAIN, predict_next
+from inference import predict_next
 
 
 class _MCTSNode:
@@ -43,7 +43,7 @@ class _MCTSNode:
         self.children: list = []
         self.visit_count = 0
         self.value_sum = 0.0
-        self.done = False  # hit ABSTAIN or max_new_tokens -- no further expansion possible
+        self.done = False  # hit max_new_tokens -- no further expansion possible
 
     @property
     def value(self) -> float:
@@ -59,11 +59,11 @@ class _MCTSNode:
         return len(self.children) == 0
 
 
-def mcts_generate(model, tok, graph, prompt: str, max_new_tokens: int, domain: str,
-                   fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
+def mcts_generate(model, tok, prompt: str, max_new_tokens: int, domain: str,
                    symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4,
                    chunk_size: int = 8, top_k: int = 3, n_simulations: int = 6,
-                   c_puct: float = 1.5, temperature: float = 0.8):
+                   c_puct: float = 1.5, temperature: float = 0.8, top_p: float = 1.0,
+                   repetition_penalty: float = 1.0):
     """Value-guided search over chunk-level generation branches. Returns
     the same result-dict shape as generate_with_grounding/_resampling, plus
     mcts_simulations/mcts_final_depth_tokens for observability into what
@@ -97,16 +97,12 @@ def mcts_generate(model, tok, graph, prompt: str, max_new_tokens: int, domain: s
             log_probs: list = []
             budget = min(chunk_size, max_new_tokens - len(node.tokens))
             for _ in range(budget):
-                next_id, info = predict_next(model, graph, ids, fast_threshold, abstain_threshold,
-                                              slow_abstain_threshold, ngram_index=ngram_index,
-                                              ngram_n=ngram_n, temperature=temperature)
-                if next_id == ABSTAIN:
-                    break
+                next_id, info = predict_next(model, ids, ngram_index=ngram_index,
+                                              ngram_n=ngram_n, temperature=temperature, top_p=top_p,
+                                              repetition_penalty=repetition_penalty)
                 chunk_tokens.append(next_id)
                 log_probs.append(math.log(max(info.get("confidence", 1e-6), 1e-6)))
                 ids = torch.cat([ids, torch.tensor([[next_id]])], dim=1)
-            if not chunk_tokens:
-                continue  # this candidate abstained immediately -- not a viable branch
             avg_log_prob = sum(log_probs) / len(log_probs)
             raw_children.append((chunk_tokens, avg_log_prob))
 
@@ -147,7 +143,6 @@ def mcts_generate(model, tok, graph, prompt: str, max_new_tokens: int, domain: s
 
     text = tok.decode(node.tokens)
     result = {"prompt": prompt, "generated_text": text, "n_tokens_generated": len(node.tokens),
-              "abstained_at_token": None if node.tokens else 0,
               "mcts_simulations": n_simulations, "mcts_final_depth_tokens": len(node.tokens)}
     if node.tokens:
         result["self_critique_score"] = self_critique_score(

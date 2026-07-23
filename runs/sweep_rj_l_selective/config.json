@@ -1,0 +1,11 @@
+{
+  "domain": "rj",
+  "size": "l",
+  "arch": "selective",
+  "seed": 57,
+  "n_params": 6157568,
+  "block_stack_params": 5067520,
+  "best_val": 6.220822525024414,
+  "best_step": 550,
+  "wall_s": 35.62
+}

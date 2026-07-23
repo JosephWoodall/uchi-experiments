@@ -35,7 +35,9 @@ from data import (
     load_joint_modalities,
     load_lm_corpus,
     load_modality_corpus,
+    load_scale_up_corpus,
     load_weighted_code_corpus,
+    load_weighted_rj_corpus,
 )
 from model import GPTConfig, TinyGPT
 from tokenizer import VOCAB_SIZE, Tokenizer
@@ -83,6 +85,25 @@ SIZES = {
     # --rwkv-hybrid --attention-layers 5 --embedding-rank 32
     # --tokenizer-variant balanced --vocab-size 32768 to reproduce.
     "chinchilla_min": dict(d_model=128, n_layer=6, n_head=4),
+    # Computed (not guessed) Chinchilla-optimal size for text's real,
+    # measured token budget after the Gutenberg expansion + safe chunked
+    # tokenization (safe_tokenize_text.py): 305,451,284 tokens / 20 =
+    # 15,272,564 -- this config's 15,021,120 total params, embedding_rank=80,
+    # is within 2%. Supersedes "xxl"'s ~428M-token projection, which
+    # over-estimated the real post-expansion count (28.08M params would
+    # have been ~1.8x over-parameterized for what the corpus actually
+    # contains). Pair with --rwkv-hybrid --attention-layers 9
+    # --embedding-rank 80 --tokenizer-variant balanced --vocab-size 32768.
+    "chinchilla_text": dict(d_model=320, n_layer=10, n_head=8),
+    # Computed (not guessed) Chinchilla-optimal size for the real
+    # scale-up mix's total token budget (tasks/ducky.md Phase AI):
+    # literary (rj+gutenberg, 300,326,357) + code_breadth (41,576,969) +
+    # code_core (2,587,556) + conversation (9,015) = 344,499,897 tokens
+    # / 20 = 17,224,995 -- this config's 17,487,680 total params,
+    # embedding_rank=80, is within 2%. Pair with --rwkv-hybrid
+    # --attention-layers 11 --embedding-rank 80 --tokenizer-model-path
+    # data/tokenizer/spm_ducky_scale_32768.model --scale-up to reproduce.
+    "chinchilla_scaleup": dict(d_model=320, n_layer=12, n_head=8),
 }
 
 PROMPTS = {
@@ -163,6 +184,7 @@ def run(args):
         raise ValueError("joint dataset only wired for the base arm in this pass")
 
     tok = None if is_modality else (
+        Tokenizer(model_path=args.tokenizer_model_path) if args.tokenizer_model_path else
         Tokenizer(vocab_size=args.vocab_size or VOCAB_SIZE, variant=args.tokenizer_variant)
         if (args.vocab_size or args.tokenizer_variant) else Tokenizer()
     )
@@ -189,8 +211,11 @@ def run(args):
         scaled_residual_init=args.nanogpt_recipe,
         **size_cfg,
     )
-    model = TinyGPT(cfg)
+    device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
+    model = TinyGPT(cfg).to(device)
     n_params = model.num_params()
+    eval_bs = args.eval_batch_size if args.eval_batch_size else args.batch_size
+    print(f"device: {device}")
     print(f"[{args.dataset}/{args.arm}/{args.size}] {n_params:,} params, block_size={args.block_size}, vocab={vocab_size}")
 
     # Full-model compilation: bigger speedup than compiling just the WKV
@@ -235,6 +260,11 @@ def run(args):
     moe_suffix += f"_selectiveL{''.join(map(str, args.selective_decay_layers))}" if args.selective_decay_layers else ""
     moe_suffix += "_widthgate" if args.use_width_gating else ""
     moe_suffix += f"_tok{args.tokenizer_variant}" if args.tokenizer_variant else ""
+    moe_suffix += f"_tok{Path(args.tokenizer_model_path).stem}" if args.tokenizer_model_path else ""
+    moe_suffix += f"_convw{args.rj_conversation_weight}" if args.rj_conversation_weight is not None else ""
+    moe_suffix += f"_codew{args.rj_code_weight}" if args.rj_code_weight is not None else ""
+    moe_suffix += "_scaleup" if args.scale_up else ""
+    moe_suffix += f"_noo{args.scaleup_noosphere_weight}" if args.scale_up else ""
     moe_suffix += f"_lr{args.lr_schedule}" if args.lr_schedule != "none" else ""
     moe_suffix += "_nanogpt" if args.nanogpt_recipe else ""
     moe_suffix += f"_seed{args.seed}" if args.seed != 0 else ""
@@ -248,17 +278,18 @@ def run(args):
 
     def lm_batch_loss(ids, bs):
         x, targets = get_lm_batch(ids, bs, args.block_size, n_future)
+        x, targets = x.to(device), targets.to(device)
         loss = compute_lm_loss(compute_model, x, targets, pad_id)
         return loss, {"loss": loss.item()}
 
     def jepa_pair_loss(docs, codes):
         bs = docs.size(0)
-        code_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long)
+        code_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long, device=device)
         code_targets[:, :-1, 0] = codes[:, 1:]
         code_targets[codes == pad_id] = -1
         lm_loss = compute_lm_loss(compute_model, codes, code_targets, pad_id)
 
-        doc_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long)
+        doc_targets = torch.full((bs, args.block_size, 1), -1, dtype=torch.long, device=device)
         doc_targets[:, :-1, 0] = docs[:, 1:]
         doc_targets[docs == pad_id] = -1
         doc_lm_loss = compute_lm_loss(compute_model, docs, doc_targets, pad_id)
@@ -285,14 +316,14 @@ def run(args):
 
         def train_step():
             docs, codes = jepa_batch(train_pairs, args.batch_size)
-            return jepa_pair_loss(docs, codes)
+            return jepa_pair_loss(docs.to(device), codes.to(device))
 
         @torch.no_grad()
         def eval_step():
             model.eval()
             # val_pairs is tiny (~10) -- use all of it every time, not a sample
-            docs = torch.stack([p[0] for p in val_pairs])
-            codes = torch.stack([p[1] for p in val_pairs])
+            docs = torch.stack([p[0] for p in val_pairs]).to(device)
+            codes = torch.stack([p[1] for p in val_pairs]).to(device)
             _, metrics = jepa_pair_loss(docs, codes)
             model.train()
             return {f"val_{k}": v for k, v in metrics.items()}
@@ -304,6 +335,7 @@ def run(args):
 
         def train_step():
             x, targets = get_joint_batch(train_dict, JOINT_WEIGHTS, args.batch_size, args.block_size)
+            x, targets = x.to(device), targets.to(device)
             loss = compute_lm_loss(compute_model, x, targets, pad_id)
             return loss, {"loss": loss.item()}
 
@@ -313,7 +345,8 @@ def run(args):
             per_modality = {name: [] for name in joint}
             for _ in range(n_batches):
                 for name in joint:
-                    x, targets = get_joint_batch({name: val_dict[name]}, {name: 1.0}, args.batch_size, args.block_size)
+                    x, targets = get_joint_batch({name: val_dict[name]}, {name: 1.0}, eval_bs, args.block_size)
+                    x, targets = x.to(device), targets.to(device)
                     per_modality[name].append(compute_lm_loss(compute_model, x, targets, pad_id).item())
             model.train()
             result = {f"val_loss_{name}": sum(v) / len(v) for name, v in per_modality.items()}
@@ -322,6 +355,9 @@ def run(args):
 
     else:
         use_weighted_code = args.dataset == "code" and args.code_core_weight is not None
+        use_weighted_rj = args.dataset == "rj" and args.rj_conversation_weight is not None
+        use_scale_up = args.dataset == "rj" and args.scale_up
+        use_weighted_pools = use_weighted_code or use_weighted_rj or use_scale_up
         if is_modality:
             train_ids, val_ids = load_modality_corpus(args.dataset)
         elif use_weighted_code:
@@ -337,20 +373,71 @@ def run(args):
             pools = load_weighted_code_corpus(tok)
             if "synthetic" in pools:
                 s = args.code_synthetic_weight
-                code_weights = {"core": args.code_core_weight * (1 - s),
+                pool_weights = {"core": args.code_core_weight * (1 - s),
                                 "breadth": (1 - args.code_core_weight) * (1 - s),
                                 "synthetic": s}
             else:
-                code_weights = {"core": args.code_core_weight, "breadth": 1 - args.code_core_weight}
+                pool_weights = {"core": args.code_core_weight, "breadth": 1 - args.code_core_weight}
+            train_pools = {k: v[0] for k, v in pools.items()}
+            val_pools = {k: v[1] for k, v in pools.items()}
+        elif use_weighted_rj:
+            # Romeo & Juliet vs. the small curated conversation_corpus.txt,
+            # optionally plus the stdlib code corpus -- same reasoning as
+            # the code core/breadth/synthetic split, see
+            # load_weighted_rj_corpus's own docstring. --rj-code-weight is
+            # taken off the top (like --code-synthetic-weight), remainder
+            # split between rj/conversation per --rj-conversation-weight.
+            include_code = args.rj_code_weight is not None
+            pools = load_weighted_rj_corpus(tok, include_code=include_code)
+            if include_code and "code" in pools:
+                c = args.rj_code_weight
+                pool_weights = {"rj": (1 - args.rj_conversation_weight) * (1 - c),
+                                "conversation": args.rj_conversation_weight * (1 - c),
+                                "code": c}
+            else:
+                pool_weights = {"rj": 1 - args.rj_conversation_weight, "conversation": args.rj_conversation_weight}
+            train_pools = {k: v[0] for k, v in pools.items()}
+            val_pools = {k: v[1] for k, v in pools.items()}
+        elif use_scale_up:
+            # Real scale-up mix (tasks/ducky.md Phase AI/AJ): rj / gutenberg
+            # (now SEPARATE pools, not one combined "literary" -- Phase AJ
+            # fix for gutenberg's general prose diluting rj's own dramatic
+            # voice) / conversation / code_core+code_breadth / noosphere.
+            # --scaleup-code-weight taken off the top, split internally by
+            # --code-core-weight (same composition pattern as
+            # --code-synthetic-weight); --scaleup-conversation-weight and
+            # --scaleup-noosphere-weight also taken off the top; the
+            # remainder is split between rj/gutenberg per --scaleup-rj-
+            # weight (rj upweighted within its own share, same stratified-
+            # resampling reasoning as the tokenizer's own fix for the
+            # identical rj-vs-gutenberg volume disparity). noosphere gets
+            # a small fixed share of its own (default 0.05) rather than
+            # being split internally like code -- it's a single coherent
+            # ~908KB source (workspace/noosphere v1+v2), not two pools.
+            pools = load_scale_up_corpus(tok)
+            cw = args.scaleup_code_weight
+            vw = args.scaleup_conversation_weight
+            nw = args.scaleup_noosphere_weight
+            text_share = 1 - cw - vw - nw
+            rw = args.scaleup_rj_weight
+            pool_weights = {
+                "code_core": cw * args.code_core_weight,
+                "code_breadth": cw * (1 - args.code_core_weight),
+                "conversation": vw,
+                "rj": text_share * rw,
+                "gutenberg": text_share * (1 - rw),
+                "noosphere": nw,
+            }
             train_pools = {k: v[0] for k, v in pools.items()}
             val_pools = {k: v[1] for k, v in pools.items()}
         else:
             train_ids, val_ids = load_lm_corpus(args.dataset, tok)
 
         def train_step():
-            if use_weighted_code:
-                x, targets = get_weighted_code_batch(train_pools, code_weights, args.batch_size,
+            if use_weighted_pools:
+                x, targets = get_weighted_code_batch(train_pools, pool_weights, args.batch_size,
                                                       args.block_size, n_future)
+                x, targets = x.to(device), targets.to(device)
                 loss = compute_lm_loss(compute_model, x, targets, pad_id)
                 return loss, {"loss": loss.item()}
             return lm_batch_loss(train_ids, args.batch_size)
@@ -358,23 +445,24 @@ def run(args):
         @torch.no_grad()
         def eval_step(n_batches=5):
             model.eval()
-            if use_weighted_code:
+            if use_weighted_pools:
                 losses = []
                 for _ in range(n_batches):
-                    x, targets = get_weighted_code_batch(val_pools, code_weights, args.batch_size,
+                    x, targets = get_weighted_code_batch(val_pools, pool_weights, eval_bs,
                                                           args.block_size, n_future)
+                    x, targets = x.to(device), targets.to(device)
                     losses.append(compute_lm_loss(compute_model, x, targets, pad_id).item())
             else:
-                losses = [lm_batch_loss(val_ids, args.batch_size)[1]["loss"] for _ in range(n_batches)]
+                losses = [lm_batch_loss(val_ids, eval_bs)[1]["loss"] for _ in range(n_batches)]
             model.train()
             return {"val_loss": sum(losses) / len(losses)}
 
     if is_joint:
         prompt_ids = None  # generated per-modality-marker below instead of one fixed prompt
     elif is_modality:
-        prompt_ids = train_ids[:8].unsqueeze(0)
+        prompt_ids = train_ids[:8].unsqueeze(0).to(device)
     else:
-        prompt_ids = torch.tensor([tok.encode(PROMPTS[args.dataset])], dtype=torch.long)
+        prompt_ids = torch.tensor([tok.encode(PROMPTS[args.dataset])], dtype=torch.long, device=device)
 
     best_val = float("inf")
     best_step = 0
@@ -407,8 +495,9 @@ def run(args):
 
         model.train()
         opt.zero_grad()
-        loss, extra = train_step()
-        loss.backward()
+        for micro in range(args.grad_accum_steps):
+            loss, extra = train_step()
+            (loss / args.grad_accum_steps).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
 
@@ -425,7 +514,7 @@ def run(args):
                 best_step = step
                 patience_counter = 0
                 plateau_stall = 0
-                torch.save(model.state_dict(), run_dir / "model_best.pt")
+                torch.save({k: v.cpu() for k, v in model.state_dict().items()}, run_dir / "model_best.pt")
             else:
                 patience_counter += 1
                 if args.lr_schedule == "plateau":
@@ -439,6 +528,18 @@ def run(args):
                                 print(f"plateau: reducing lr {plateau_lr:.2e} -> {new_lr:.2e} "
                                       f"at step {step} (no improvement for {args.plateau_patience} checkpoints)")
                                 plateau_lr = new_lr
+                                # A decay's whole point is to give the model a fresh
+                                # shot at a lower LR -- previously patience_counter
+                                # kept counting through it unchanged, so whenever
+                                # --patience was only slightly bigger than
+                                # --plateau-patience (as in this project's own
+                                # "production" defaults, 6 vs 5), early stopping
+                                # fired ~1 checkpoint after the decay, before the
+                                # new LR could possibly show any improvement.
+                                # Found via a real production run: decay at step
+                                # 11000, early-stop at step 11250, final loss
+                                # measurably worse than a longer un-decayed run.
+                                patience_counter = 0
                             plateau_stall = 0
                             plateau_cooldown_left = args.plateau_cooldown
                 # Every extended sweep this session found its real ceiling
@@ -486,7 +587,7 @@ def run(args):
 
                 text_parts = []
                 for name, marker in MARKERS.items():
-                    seed = torch.tensor([[marker]], dtype=torch.long)
+                    seed = torch.tensor([[marker]], dtype=torch.long, device=device)
                     out = model.generate(seed, max_new_tokens=40)[0].tolist()
                     frac = in_lane_frac(out, name)
                     text_parts.append(f"{name} (in-lane {frac:.0%}): {describe(out)}")
@@ -506,7 +607,7 @@ def run(args):
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics_log, indent=2))
     (run_dir / "samples.json").write_text(json.dumps(samples_log, indent=2))
-    torch.save(model.state_dict(), run_dir / "model_final.pt")
+    torch.save({k: v.cpu() for k, v in model.state_dict().items()}, run_dir / "model_final.pt")
     (run_dir / "config.json").write_text(
         json.dumps({**vars(args), "n_params": n_params, "best_step": best_step, "best_val": best_val,
                      "vocab_size": vocab_size}, indent=2)
@@ -538,6 +639,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", choices=list(SIZES), default="xs")
     p.add_argument("--block-size", type=int, default=128)
     p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--grad-accum-steps", type=int, default=1, help="accumulate gradients over this many "
+                    "micro-batches (each of --batch-size) before opt.step() -- lets a smaller --batch-size "
+                    "fit in less GPU memory while keeping the same effective batch size (batch_size * "
+                    "grad_accum_steps). Added to run alongside a concurrent GPU job without OOM; default 1 "
+                    "is byte-for-byte identical to every existing run's behavior.")
+    p.add_argument("--eval-batch-size", type=int, default=None, help="batch size used for validation only; "
+                    "defaults to --batch-size (old behavior, unchanged) if not set. Previously eval_step "
+                    "always reused --batch-size, so shrinking it for --grad-accum-steps (memory reasons) "
+                    "silently made validation noisier too (fewer samples per checkpoint) -- this decouples "
+                    "the two, so a small training micro-batch doesn't have to mean a noisy val-loss estimate.")
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--patience", type=int, default=0, help="stop after this many checkpoints with no val "
                     "improvement (0 = disabled, run the full --steps budget -- matches every run this session "
@@ -561,6 +672,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vocab-size", type=int, default=None, help="explicit tokenizer vocab size (e.g. 1024 to "
                     "match older toy-scale checkpoints) -- default None uses tokenizer.py's module default "
                     "(currently 32768), unchanged existing behavior")
+    p.add_argument("--tokenizer-model-path", type=str, default=None, help="load an exact .model file via "
+                    "Tokenizer(model_path=...), bypassing the vocab_size/variant naming convention entirely -- "
+                    "for a dedicated single-corpus tokenizer (e.g. one trained only on romeo_and_juliet.txt) "
+                    "that isn't part of the shared multi-domain vocab family. Takes precedence over "
+                    "--vocab-size/--tokenizer-variant if both are given.")
     p.add_argument("--selective-decay", action="store_true", help="mamba_lite.py's SelectiveTimeMixing "
                     "(input-dependent decay) instead of rwkv_model.py's TimeMixing for non-attention "
                     "blocks when --rwkv-hybrid is set")
@@ -589,6 +705,48 @@ def build_parser() -> argparse.ArgumentParser:
                     "data/code/synthetic_relational.txt exists: fraction of training examples drawn "
                     "from synthetic call-graph-composed statements, remainder split between core/breadth "
                     "per --code-core-weight.")
+    p.add_argument("--rj-conversation-weight", type=float, default=None,
+                    help="--dataset rj only: sampling weight for the curated conversation_corpus.txt pool "
+                    "per training example (rj gets 1 - this, or 1 - this - rj-code-weight's remainder if "
+                    "--rj-code-weight is also set). Default None disables weighted pooling entirely (plain "
+                    "rj-only training, unchanged existing behavior) -- conversation_corpus.txt is opt-in, "
+                    "not a silent default change.")
+    p.add_argument("--rj-code-weight", type=float, default=None,
+                    help="--dataset rj only, requires --rj-conversation-weight also set: sampling weight "
+                    "for the stdlib code corpus (corpus_core.txt) taken off the top, remainder split "
+                    "between rj/conversation per --rj-conversation-weight -- same composition pattern as "
+                    "--code-synthetic-weight over --code-core-weight. Default None disables the code pool "
+                    "entirely (two-pool rj/conversation training, unchanged existing behavior).")
+    p.add_argument("--scale-up", action="store_true",
+                    help="--dataset rj only: real scale-up mix (tasks/ducky.md Phase AI/AJ/AK) -- rj / "
+                    "gutenberg_corpus.txt (separate pools, not one combined 'literary' -- Phase AJ fix "
+                    "for gutenberg's general prose diluting rj's own dramatic voice) / conversation / "
+                    "code_core+code_breadth / noosphere (Phase AK: real code pulled from the sibling "
+                    "workspace/noosphere project). Requires all six pools already safely tokenized ahead "
+                    "of time under whatever --tokenizer-model-path is given -- this flag does not itself "
+                    "do any large, unsafe tokenization.")
+    p.add_argument("--scaleup-code-weight", type=float, default=0.4,
+                    help="--scale-up only: combined sampling weight for code_core+code_breadth, split "
+                    "internally by --code-core-weight (same composition as --code-synthetic-weight).")
+    p.add_argument("--scaleup-conversation-weight", type=float, default=0.2,
+                    help="--scale-up only: sampling weight for the curated conversation pool, taken off "
+                    "the remainder after --scaleup-code-weight. The rest (1 - scaleup_code_weight - "
+                    "scaleup_conversation_weight) is split between rj/gutenberg per --scaleup-rj-weight.")
+    p.add_argument("--scaleup-rj-weight", type=float, default=0.3,
+                    help="--scale-up only: fraction of the rj+gutenberg text share given to rj specifically "
+                    "(gutenberg gets the rest) -- rj is only ~150KB against gutenberg's ~1.3GB (~8700:1), "
+                    "so without real upweighting here rj's own dramatic voice gets diluted into gutenberg's "
+                    "general prose (tasks/ducky.md Phase AI's observed register-drift finding). Same "
+                    "stratified-resampling discipline as the tokenizer's own rj/conversation upweighting.")
+    p.add_argument("--scaleup-noosphere-weight", type=float, default=0.05,
+                    help="--scale-up only: fixed top-level sampling weight for the noosphere code pool "
+                    "(corpus_noosphere.txt -- real PyTorch/signal-processing source pulled from the sibling "
+                    "workspace/noosphere project, ~908KB/23.4K lines). Taken off the top like "
+                    "--scaleup-conversation-weight, not split internally like --scaleup-code-weight, since "
+                    "it's one coherent source rather than two pools. Small default share since it's tiny "
+                    "against code_core+code_breadth -- kept off zero so it gets real training exposure "
+                    "rather than rounding away, same reasoning as every other small-pool upweighting this "
+                    "project has needed (rj vs. gutenberg, rj+conversation in the tokenizer itself).")
     p.add_argument("--lr-schedule", choices=["none", "cosine", "plateau"], default="none", help="'none' "
                     "(default) -- flat args.lr for the whole run, unchanged behavior for every existing "
                     "checkpoint's reproducibility. 'cosine' -- linear warmup then cosine decay to --min-lr "
@@ -616,6 +774,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "(beta1 stays fixed at 0.9) -- was hardcoded 0.95, now exposed for run_hpo_sweep.py "
                     "to search")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", type=str, default=None, help="'cuda' or 'cpu'; default auto-detects cuda if "
+                    "available. Previously this codebase had no device placement at all -- every tensor "
+                    "implicitly lived on CPU regardless of free GPU (measured 30-40x steady-state speedup "
+                    "on cuda once past torch.compile's one-time cost, see run_scaling_sweep.py)")
     p.add_argument("--num-threads", type=int, default=8, help="torch.set_num_threads() -- measured optimal on this "
                     "machine (20 logical cores); the default 10 is close but 8 was faster, and 16-20 was 4-6x slower "
                     "from thread-sync overhead swamping the benefit on our small tensor ops")

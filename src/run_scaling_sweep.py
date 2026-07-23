@@ -1,23 +1,26 @@
-"""12-config scaling sweep to validate selective decay properly (not a
-single toy point) before deciding whether to promote it ahead of the next
-production retrain -- and the first real training use of
-spm_32768_balanced.model (see tasks/ducky.md's tokenizer-fairness
-section), incorporating it without a full production retrain.
+"""24-config scaling sweep to validate selective decay properly across a
+real size range (not 2 close-together toy points) before deciding whether
+to promote it ahead of the next production retrain -- and the first real
+training use of spm_32768_balanced.model (see tasks/ducky.md's
+tokenizer-fairness section), incorporating it without a full production
+retrain.
 
-2 sizes (xs, s -- deliberately the cheapest presets, per the user's
-resource-conscious choice) x 3 domains (rj, code_core, terminal) x 2
-architectures (RWKV-hybrid vs. selective-hybrid; dense excluded --
-already well-established as losing to hybrid across many prior rounds,
-not the open question here). Self-contained training loop (reuses
-data.get_lm_batch / train.compute_lm_loss directly) rather than routing
-through train.py's --dataset, since "code_core" and "terminal" aren't
-`load_lm_corpus`'s domains and this stays a one-off sweep, not a change to
-train.py's shared CLI surface.
+4 sizes (xs, s, m, l -- the original xs/s toy pass plus m/l, now that the
+GPU that was previously pinned by a live uchi training job is free) x 3
+domains (rj, code_core, terminal) x 2 architectures (RWKV-hybrid vs.
+selective-hybrid; dense excluded -- already well-established as losing to
+hybrid across many prior rounds, not the open question here).
+Self-contained training loop (reuses data.get_lm_batch /
+train.compute_lm_loss directly) rather than routing through train.py's
+--dataset, since "code_core" and "terminal" aren't `load_lm_corpus`'s
+domains and this stays a one-off sweep, not a change to train.py's shared
+CLI surface.
 
-Honest limitation, stated up front: 2 size points per curve is a secant
-slope, not a robust regression -- directional signal for the promotion
-decision, not a publication-grade fit. fit_scaling_law.py itself is built
-generally (any number of points) for when more size points exist later.
+The original xs/s-only pass's own limitation, now addressed: 2 close
+points is a secant slope, not a robust regression. 4 points spanning a
+real size range lets fit_scaling_law.py's power-law fit (built generally,
+any number of points) actually be trusted as a curve, not just a
+direction between two nearby dots.
 """
 import json
 import time
@@ -33,13 +36,22 @@ from tokenizer import Tokenizer
 from train import SIZES, compute_lm_loss
 
 RUNS_DIR = DATA_ROOT / "runs"
-EMBEDDING_RANK = 32  # keeps vocab=32768's embedding table from dwarfing xs/s's tiny block stack
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EMBEDDING_RANK = 32  # keeps vocab=32768's embedding table from dwarfing xs/s/m/l's block stack
 SEED = 57
 STEPS = 2000
-PATIENCE = 2
+# PATIENCE=2 @ 50-step checks (100 steps of grace) + 5-batch val averaging was
+# tuned on xs/s only. At m/l it produced a false-plateau artifact: one arch
+# would get stuck at step ~150-250 while the other, equally-valid arch kept
+# descending to step ~1000-1650 -- a stopping-rule artifact, not a real
+# architecture difference (confirmed on rj, code_core, and terminal alike).
+# Loosened for m/l reruns: more grace steps before quitting, less noisy each
+# check.
+PATIENCE = 6
+VAL_BATCHES = 10
 BLOCK_SIZE = 128
 BATCH_SIZE = 32
-SIZES_SWEPT = ["xs", "s"]
+SIZES_SWEPT = ["xs", "s", "m", "l"]
 DOMAINS = ["rj", "code_core", "terminal"]
 ARCHITECTURES = ["rwkv", "selective"]
 
@@ -74,7 +86,7 @@ def train_one(domain: str, size: str, arch: str, tok: Tokenizer, train_ids, val_
         embedding_rank=EMBEDDING_RANK,
         **size_cfg,
     )
-    model = TinyGPT(cfg)
+    model = TinyGPT(cfg).to(DEVICE)
     n_params = model.num_params()
     block_stack_params = sum(p.numel() for p in model.blocks.parameters())
     opt = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -85,6 +97,7 @@ def train_one(domain: str, size: str, arch: str, tok: Tokenizer, train_ids, val_
         model.train()
         opt.zero_grad()
         x, targets = get_lm_batch(train_ids, BATCH_SIZE, BLOCK_SIZE, 1)
+        x, targets = x.to(DEVICE), targets.to(DEVICE)
         loss = compute_lm_loss(model, x, targets, pad_id=0)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -93,10 +106,12 @@ def train_one(domain: str, size: str, arch: str, tok: Tokenizer, train_ids, val_
         if step % 50 == 0 or step == STEPS:
             model.eval()
             with torch.no_grad():
-                losses = [
-                    compute_lm_loss(model, *get_lm_batch(val_ids, BATCH_SIZE, BLOCK_SIZE, 1), pad_id=0).item()
-                    for _ in range(5)
-                ]
+                val_losses = []
+                for _ in range(VAL_BATCHES):
+                    vx, vt = get_lm_batch(val_ids, BATCH_SIZE, BLOCK_SIZE, 1)
+                    vx, vt = vx.to(DEVICE), vt.to(DEVICE)
+                    val_losses.append(compute_lm_loss(model, vx, vt, pad_id=0).item())
+                losses = val_losses
             val_loss = sum(losses) / len(losses)
             if val_loss < best_val:
                 best_val, best_step, patience_ctr = val_loss, step, 0

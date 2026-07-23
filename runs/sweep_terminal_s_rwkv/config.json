@@ -5,7 +5,7 @@
   "seed": 57,
   "n_params": 1209024,
   "block_stack_params": 150080,
-  "best_val": 5.60933837890625,
+  "best_val": 5.608530139923095,
   "best_step": 200,
-  "wall_s": 159.24
+  "wall_s": 5.11
 }

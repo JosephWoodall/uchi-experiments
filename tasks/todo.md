@@ -1171,6 +1171,160 @@ TinyGPT's job).
       width-gating result: informative, not a reason to scale up and
       retry.
 
+## Phase Z — GPU freed up: real 4-point (xs/s/m/l) scaling verdict, replaces Phase Q's 2-point one
+- [x] The RTX 5070 constraint stated at the top of this file (pinned at
+      11.2/12.2GB since 2026-07-15) is gone -- GPU is free (826MiB/12.2GB,
+      5% util). Directly unblocks Phase Q's own flagged gap: only xs/s (2
+      close points) had ever been tested. Wired real GPU device placement
+      into `run_scaling_sweep.py` (never existed before, despite Phase A's
+      original "device auto-detect" intent -- everything ran on CPU
+      implicitly). Verified GPU is 30-40x faster steady-state (once past a
+      one-time, shape-dependent `torch.compile` cost) before trusting it.
+- [x] Extended the sweep to `xs/s/m/l` (24 configs). First full run looked
+      decisive but was contaminated by a stopping-rule bug: `PATIENCE=2`
+      @ 50-step checks + 5 val batches (tuned against xs/s only) let one
+      arch halt on a noisy early plateau (~step 150) while an equally-good
+      arch escaped the same dip and trained on to 800-1650 steps --
+      producing huge, non-monotonic fake "wins" on `code_core`/`terminal`.
+      Diagnosed via the correlated stuck-early-vs-trains-on-forever pattern
+      recurring identically on all 3 domains, not assumed.
+- [x] Fixed (`rerun_ml.py`): `PATIENCE`->6, val batches 5->10, re-trained
+      only the contaminated m/l points (12 runs), reused the clean,
+      unaffected xs/s points as-is. Matched-arch pairs now stop at the same
+      step far more often -- confirms the fix.
+- [x] **Real, trustworthy 4-point verdict, promote selective decay = False
+      stands (supersedes Phase Q's 2-point result)**: rj near-exact tie
+      (both near-zero fitted alpha, consistent with rj's established
+      data-ceiling status), code_core rwkv wins by a small real margin
+      (4.322 vs 4.345 extrapolated), terminal rwkv wins decisively
+      (2.614 vs 2.771, and the fitted alpha itself is meaningfully
+      steeper: 0.109 vs 0.100) -- RWKV-hybrid's margin grows exactly where
+      a domain has real scaling headroom, shrinks to a tie where it
+      doesn't. See `ducky.md`'s Phase Z for full numbers and the honest
+      caveat (some `l`-size runs hit the step ceiling without fully
+      converging).
+- [x] **This is the concrete answer to "architecture that holds up on
+      small text and large text, regardless of size": RWKV-hybrid**,
+      validated across 4 real size points x 3 domains, not a single toy
+      point. Per `no-scaleup-without-proof`, this is exactly the cheap,
+      real evidence that would justify a genuine production-scale
+      commitment next -- that commitment itself is a separate, deliberate
+      decision, not taken here.
+
+## Phase AA — Cashing in the proof: real production checkpoints, code and text, on GPU
+- [x] Wired real GPU device placement into `train.py` (never existed
+      before -- same gap Phase Z found in `run_scaling_sweep.py`).
+      Re-trained code's Chinchilla-matched `chinchilla_min` config with
+      the recipe Phase X validated but never fully applied
+      (`--nanogpt-recipe --lr-schedule plateau`). Found and fixed a real
+      bug along the way: `plateau_stall` and the early-stop
+      `patience_counter` shared a clock and never reset relative to each
+      other, so early stopping fired ~1 checkpoint after every LR decay,
+      before the new LR could help -- exactly why the first attempt
+      (3.7559) was worse than the old checkpoint (3.6779). Fixed (reset
+      patience on decay) and re-ran: **best_val 3.6423**, now a real win.
+- [x] Diagnosed why no valid text checkpoint existed at all (`text_base_
+      xxl_rwkv_rank96`'s train.log was 0 bytes): `_load_text_domain`
+      concatenates the now ~1.3GB expanded Gutenberg corpus and tokenizes
+      it in one uncapped call -- the same failure mode that spiked to
+      ~19.5GB RSS on a 167MB corpus, extrapolated to something well past
+      this machine's 39GB RAM. Fixed with `safe_tokenize_text.py`
+      (chunked, per-chunk tensors concatenated at the end, not one giant
+      Python list) -- **305,451,284 real tokens, peak RSS only 5.6GB.**
+      Computed the real Chinchilla-optimal size (15,272,564 params) and
+      registered it as `chinchilla_text` (320d/10L/rank80, 15,021,120
+      params, within 2%) in `train.py`'s `SIZES`.
+- [x] Discovered mid-launch that the GPU wasn't actually free: a separate,
+      legitimate, currently-running `uchi.flux.react_warmup_train` job
+      (2+ hours in) was using 8.1GB/12.2GB VRAM -- the earlier "GPU is
+      free" reading had caught a lull between phases of that same job.
+      Added `--grad-accum-steps` to `train.py` (default 1, zero behavior
+      change) so `--batch-size 8 --grad-accum-steps 4` reproduces the
+      same effective batch of 32 while fitting alongside the other job,
+      per the user's explicit choice. **Result: best_val 5.0030** at step
+      7,500 of 75,000 (~38 min total, converged well before the ceiling) --
+      beats the old, differently-sized `text_base_xl_rwkv_rank64` (5.1040),
+      the first complete Chinchilla-matched text checkpoint this project
+      has produced. Honest caveat: `eval_step` reuses the reduced
+      micro-batch size for validation too, so this number is measured
+      somewhat noisier (5x8 samples) than the code run's (5x32) --
+      flagged, not fixed this round.
+- [x] Wired both into `ducky.py`'s `DEFAULT_RUNS` and verified end-to-end,
+      not just by loss number. `Ducky(domain="text")` surfaced a second
+      real, serious bug on first real use: `build_ngram_index`/
+      `build_graph` were only ever safe at code's ~43M-token scale,
+      never re-checked after text's corpus grew to 305M -- a live call
+      spiked past 25GB RSS and had to be killed before it OOM'd the
+      machine (and risked the concurrent uchi GPU job with it). Fixed by
+      capping the token corpus fed to both structures to the same
+      already-proven-safe order of magnitude (50M tokens). Re-verified
+      safe and working (`Ducky(domain="text").ask("ROMEO:")` -> `'The'`,
+      no crash).
+- [x] **Re-ran `bench_ducky` against the new code default: still 0/10**,
+      but genuinely informative -- completions are now built from real
+      (if ultimately wrong) Python idioms instead of gibberish or
+      1-2-token abstention, the same "coherent but not capable" ceiling
+      this project has now confirmed at four separate scale/recipe
+      points. The architecture and recipe work is real and measurably
+      better in every way that isn't this specific capability -- it just
+      doesn't touch this ceiling. See `ducky.md`'s Phase AA for full
+      detail on every bug found and fixed along the way.
+
+## Phase V — "One fluent model": Ducky as the shared engine for Uchi + Noosphere
+**This is now the repo's confirmed main objective, not a proposal under
+review** (see `core_principle.md`'s revised North Star): Ducky becomes the
+single unified model replacing Uchi's FLUX proposer *and* Noosphere v2's EEG
+stream encoder -- one set of weights, not two separate models that happen to
+share a repo. User's explicit instruction: pursue this as the goal to
+strive for; no code implementation yet, plan only.
+
+A Destructor pass was run against the *sequencing* before accepting this (see
+conversation record): the original framing bundled a same-modality swap
+(Uchi, text->text) with a cross-modality, safety-critical swap (Noosphere,
+EEG->6DOF prosthetic control) into one joint-training bet, with zero cheap
+evidence a ~17-20M-param shared core transfers across modalities at all, and
+`bench_ducky.py` has been 0/10 on every measurement this entire project. The
+destination survives that pass unchanged (user confirmed it explicitly); the
+sequencing below is how it gets built without betting real GPU time or, worse,
+safety-critical code, on an unproven assumption. Two tracks, run
+independently, converging on one model once each clears its own gate; nothing
+touches Noosphere's actual safety-gated production code (ERN halt, watchdog,
+ZOH-stable stream encoder) until Track 2 produces a real number.
+
+- [ ] **Track 1 (Uchi, text-only, no new science).** Ducky replaces FLUX only
+      once `bench_ducky.py` moves off 0/10 -- that's the real, already-known
+      blocker (data/capability), not architecture or training recipe. No
+      further action until that number moves; revisit data mix / model size
+      per the still-open Phase AJ items (rj/gutenberg split completion,
+      Chinchilla-optimal resize) before assuming more scale alone fixes it.
+- [ ] **Track 2 (Noosphere, cross-modality, the real open question).** One
+      toy, CPU/small-GPU experiment, off the safety-critical path entirely:
+      Noosphere's own synthetic EEG generator (`v2_digital_self_replication/
+      data/synthetic_eeg.py`, zero hardware/subject risk) + Ducky's existing
+      small text/code pools. Train (a) a tiny shared RWKV core on both
+      streams (CE loss on text, MSE on the continuous 6-DOF target) and (b)
+      two size-matched single-modality baselines. Compare loss on each side
+      independently -- shared must not lose to either baseline to call the
+      hypothesis alive.
+- [ ] Track 2's result decides the *next* step, not whether the objective
+      stands (the objective is confirmed). If shared wins/ties both sides at
+      toy scale -- design the real modality-router + multi-head architecture
+      next, same small-scale-first ramp (`xs`/`s`/`m` before `xl`) as every
+      other architecture decision in this repo. If shared loses either side
+      at this size -- that is real evidence about *this* toy config, not a
+      verdict on the goal: next moves are a bigger shared core (real
+      generalist models that pull this off run 100M-1B+ params, per
+      `core_principle.md`), a different fusion point (e.g. shared trunk with
+      per-modality adapter layers instead of one undifferentiated core), or
+      staged distillation (train each side well, then merge) -- tried in
+      that order, each still proven cheaply before the next is attempted.
+      Noosphere's production encoder stays in place and unmodified through
+      all of this until whichever approach actually clears its gate.
+- [ ] Explicit non-decision, unchanged: no Noosphere production file
+      (`stream_encoder.py`, `safety_gate.py`, `kalman_filter.py`, or anything
+      wired into `DigitalTwin`/`run_twin.py`) has been touched. Track 2 is a
+      standalone script, not an integration.
+
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one. See [`ducky.md`](ducky.md) for Ducky's own architecture record
 in full detail -- this file tracks the compressed plan; ducky.md tracks the

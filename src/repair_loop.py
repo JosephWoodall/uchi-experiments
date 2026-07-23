@@ -41,8 +41,8 @@ def _syntax_error_text(full_text: str) -> str:
         return f"{type(e).__name__}: {e.msg}"
 
 
-def generate_with_repair(model, tok, graph, prompt: str, max_new_tokens: int, domain: str,
-                          fast_threshold: float, abstain_threshold: float, slow_abstain_threshold: float,
+def generate_with_repair(model, tok, prompt: str, max_new_tokens: int, domain: str,
+                          temperature: float = 0.0, top_p: float = 1.0, repetition_penalty: float = 1.0,
                           symbol_table: set = None, ngram_index: set = None, ngram_n: int = 4,
                           max_attempts: int = 4, min_self_critique: float = 0.0):
     attempts_log = []
@@ -50,9 +50,11 @@ def generate_with_repair(model, tok, graph, prompt: str, max_new_tokens: int, do
     result = None
 
     for attempt in range(1, max_attempts + 1):
-        result = generate_with_grounding(model, tok, graph, current_prompt, max_new_tokens, domain,
-                                          fast_threshold, abstain_threshold, slow_abstain_threshold,
-                                          symbol_table, ngram_index, ngram_n)
+        result = generate_with_grounding(model, tok, current_prompt, max_new_tokens, domain,
+                                          temperature=temperature, top_p=top_p,
+                                          repetition_penalty=repetition_penalty,
+                                          symbol_table=symbol_table,
+                                          ngram_index=ngram_index, ngram_n=ngram_n)
         attempts_log.append({
             "attempt": attempt, "prompt": current_prompt,
             "generated_text": result["generated_text"],

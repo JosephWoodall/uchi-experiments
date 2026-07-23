@@ -1,0 +1,11 @@
+{
+  "domain": "terminal",
+  "size": "m",
+  "arch": "rwkv",
+  "seed": 57,
+  "n_params": 1862784,
+  "block_stack_params": 793472,
+  "best_val": 3.734873819351196,
+  "best_step": 1950,
+  "wall_s": 41.77
+}

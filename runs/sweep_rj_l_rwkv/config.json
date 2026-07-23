@@ -1,0 +1,11 @@
+{
+  "domain": "rj",
+  "size": "l",
+  "arch": "rwkv",
+  "seed": 57,
+  "n_params": 5829888,
+  "block_stack_params": 4739840,
+  "best_val": 6.2440276622772215,
+  "best_step": 500,
+  "wall_s": 31.7
+}

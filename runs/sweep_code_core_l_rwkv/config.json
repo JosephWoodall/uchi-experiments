@@ -1,0 +1,11 @@
+{
+  "domain": "code_core",
+  "size": "l",
+  "arch": "rwkv",
+  "seed": 57,
+  "n_params": 5829888,
+  "block_stack_params": 4739840,
+  "best_val": 5.08200626373291,
+  "best_step": 1950,
+  "wall_s": 66.14
+}
