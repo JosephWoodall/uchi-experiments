@@ -2458,3 +2458,132 @@ left to give. Per `no-scaleup-without-proof`, this is the kind of
 cheap-but-real evidence that would justify a genuine scale-up decision,
 now that it exists -- the decision itself is a separate, deliberate step,
 not a default next action.
+
+## Docstring drift found and fixed: DEFAULT_RUN's real training data vs. ducky.py's own claim
+
+`ducky.py`'s top-of-file docstring claimed (2026-07-22) "Deliberately
+single-domain... rj is the one corpus in scope" -- true of the checkpoint
+`DEFAULT_RUN` pointed to *at the time that sentence was written*, but
+stale after the real scale-up landed (same commit that introduced
+`DEFAULT_RUN`'s current value): the actual default checkpoint
+(`rj_base_chinchilla_scaleup_rwkv_rank80_tokspm_ducky_scale_32768_
+scaleup_lrplateau_nanogpt_seed57`) has `scale_up: true` in its
+`config.json`, trained on four weighted pools -- literary (rj+gutenberg,
+~300M tokens), conversation (~9K tokens, hand-curated), code_core+
+code_breadth (~44M tokens combined) -- 344.5M tokens total, not rj alone.
+The docstring and the code it sits above had quietly diverged.
+
+Verified with live generations through the real `Ducky()` SDK (not just
+read from config), per the user's explicit request to "see some
+generations":
+- `"ROMEO:"` -> generic Gutenberg-era prose, not Shakespearean -- the
+  ~300M-token literary pool dwarfs rj's ~26K words even after the
+  tokenizer's 50x upsampling of rj+conversation.
+- `"def parse_config("` -> structurally real Python (docstring, `if not
+  path:`, a comment), semantically loopy -- unambiguous evidence of code
+  training.
+- `"User: how are you feeling today?\nDucky:"` -> coherent multi-turn
+  dialogue that naturally invokes rj content ("Wherefore art thou
+  Romeo", "parting is such sweet sorrow") -- real cross-domain blending,
+  not just three separate skills bolted together.
+This matches what the checkpoint's own training-time `samples.json`
+already showed (step 15000/20000/25000 samples drifting from "ROMEO:"
+into Python snippets and Gutenberg-metadata-style text), just not
+previously cross-checked against the docstring's claim.
+
+Fixed: the docstring now states the real four-pool mix and points at
+`DEFAULT_RUN`'s own comment as the source of truth, and the `self.domain
+= "rj"` line in `__init__` is now commented as a grounding-behavior
+switch (skips code-only checks like syntax validity), not a claim about
+training data -- the two were easy to conflate reading the code before
+this pass. No behavior changed, only the documentation now matches what
+the checkpoint actually is.
+
+## Agent harness: public SDK + terminal UI (ducky_agent package)
+
+Per the user's explicit request to build out the North Star's "growing
+into something that needs to act as an agent" objective: a real,
+installable Python SDK (`ducky-agent` distribution, `from ducky_agent
+import DuckyAgent`) and a terminal UI (`ducky-agent` console script,
+Textual-based), adapted from the harness principle of a reference
+open-source repo (decodingai-magazine/building-a-coding-agent-from-
+scratch-course) to what Ducky actually is: a raw next-token predictor
+with zero instruction-tuning and zero native function-calling, unlike
+the reference harness's reliance on a provider LLM's own structured
+tool-calling API.
+
+**Architecture**: a text-parsed Thought/Action grammar
+(`ducky_agent/action_parser.py`) extracts tool calls from Ducky's free
+generation via a fixed few-shot example in the prompt preamble, validated
+with a restricted `ast.parse(mode="eval")` (single `Call`, `Name` func,
+all-keyword `Constant` args -- the same restricted-AST idiom this repo
+already uses in `grounding.py`, not a hand-rolled regex or `eval()`). A
+permission gate (`ducky_agent/permissions/`) evaluates deny-rule >
+allow-rule > mode-default > ask, shipping with `PermissionMode.DEFAULT`
+asking a human before every `write_file`/`run_shell` call (only
+`read_file`/`list_dir` auto-allow) -- given Ducky is measured
+unreliable, gated-by-default is the safe posture, not an afterthought. A
+4-tool minimal set (`read_file`, `list_dir`, `run_shell`, `write_file`)
+covers what a toy-scale coding agent needs without diff/patch precision
+(deliberately cut -- pays off only once the model reliably produces
+correct patches, which it doesn't). `loop.py`'s `run_turn` is a generator
+(`BuildPrompt -> Generate -> Parse -> Gate -> Execute/Ask -> Observation`)
+that pauses at `PermissionAsked` and resumes via `generator.send()`, the
+same yield-before-a-pause-point shape the reference harness's own turn
+handler uses. `context/window.py` reuses `session_history.SessionHistory`
+directly for transcript compaction (extractive, verbatim, bounded --
+never an abstractive summary sitting in the model's own context) rather
+than inventing a second compaction mechanism.
+
+**Verified correct before ever touching real Ducky** (matching this
+repo's own `bench_ducky.py`/`run_sandboxed` precedent: scripted-known-
+cases before trusting a number from the real model): 56 pytest unit
+tests (parser, tools, gate, loop, all fast and torch-free except the
+TUI's own suite), `verify_agent_harness.py`'s 6 flat scripted
+integration checks (canned-correct action executes and feeds its
+observation forward; malformed action retries then succeeds; exhausted
+retries fall back to a raw-text answer instead of crashing/hanging; a
+model that never stops emitting Actions is halted cleanly by
+`max_turns`; permission deny produces **zero real filesystem mutation**,
+verified on disk; permission allow **actually writes the real file**,
+verified on disk), and 4 headless Textual `Pilot`-driven TUI tests
+(including driving the actual permission modal through real button
+clicks and confirming deny still produces zero mutation through the full
+UI path). All passing on the first real end-to-end run against
+`ScriptedModel` before `DuckyModel` (the real-Ducky wrapper) was ever
+built.
+
+**Real, honest measurement** (`bench_ducky_agent.py`, 5 gradeable tasks
+through the real `DuckyAgent` SDK + `DuckyModel` wrapping the same
+default checkpoint as `Ducky()`, `max_turns=3`/`max_parse_retries=1`,
+`temperature=0.5`/`top_p=0.5`/`repetition_penalty=1.3` -- Ducky's own
+measured defaults): **0/5 tasks passed, and 0/5 produced a single
+parseable Action across every attempt** (list a directory, read a file
+and report its first line, write a file, trivial arithmetic, chain two
+tool calls). Not just wrong syntax -- genuinely didn't engage with the
+Thought/Action instruction format at all. Every completion drifted
+straight into code-completion-flavored continuation regardless of the
+task (`'""" if not hasattr(os, "join"): return None # --- torch/
+_inductor/cmp.py ---...'`, `'py """ # This module is used to be an
+object that will be used to use the # current directory...'`) -- the
+model's own dominant training-pool pattern (code) overriding the
+few-shot instruction in the prompt, not a parser bug: 0 `ParseErrorEvent`
+alongside 0 `ActionParsed` means the text literally never contained an
+`Action:` line to even attempt parsing.
+**Sharper and more specific than `bench_ducky.py`'s own 0/10**: that
+benchmark already established Ducky can't reliably produce a correct
+function body given a docstring. This shows something more basic
+upstream of that -- zero instruction-tuning means Ducky doesn't yet
+reliably recognize a structured task format as something to follow at
+all, even loosely, even incorrectly. Consistent with, not contradicted
+by, every other 0/10-family result in this file (Phase L's
+`mcts_lite.py`/`repair_loop.py`/`session_history.py`, Phase S/T/U's
+flywheel and Chinchilla-min checkpoints) -- reasoning/agent scaffolding
+amplifies existing capability, it cannot manufacture capability (here,
+instruction-following) the base model was never trained toward.
+**Does not move Track 1's `bench_ducky.py`-0/10 gate (`tasks/todo.md`
+Phase V) in either direction** -- that gate is about code-completion
+capability and stays exactly where it was; this measures the new
+agent-harness scaffolding honestly, on its own terms, the same
+Phase-L-consistent discipline as everything else built without base
+capability yet catching up.

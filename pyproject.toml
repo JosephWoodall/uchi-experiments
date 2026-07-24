@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ducky-agent"
+version = "0.1.0"
+description = "Public SDK and terminal UI for Ducky's agent harness -- a toy-scale, honestly-measured coding agent built on the Ducky next-token predictor."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["ducky", "agent", "harness", "tui"]
+
+dependencies = [
+    "torch",
+    "sentencepiece",
+    "scipy",
+    "pillow",
+    "numpy",
+    "textual>=0.50",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+ducky-agent = "ducky_agent.tui.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+# The existing 48 flat research scripts (data.py, model.py, ducky.py, ...)
+# are not a nested package -- py-modules lists exactly the transitive
+# import closure ducky.py's public SDK path needs, verified directly by
+# grepping every file's own imports, not guessed. The remaining ~35
+# bench_*/run_*/eval_*/build_* scripts stay dev-only, unpackaged, run the
+# existing way (python3 script.py from src/).
+py-modules = [
+    "ducky",
+    "data",
+    "grounding",
+    "inference",
+    "mcts_lite",
+    "repair_loop",
+    "session_history",
+    "session_memory",
+    "model",
+    "tokenizer",
+    "train",
+    "codec",
+    "rwkv_model",
+    "bitnet",
+    "mamba_lite",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ducky_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/ducky_agent/tests"]

@@ -10,14 +10,26 @@ history of what was tried and removed.
     d = Ducky()
     answer = d.ask("ROMEO:")   # always returns a string, never raises
 
-Deliberately single-domain and single-backbone right now (2026-07-22,
-user's explicit call): "nail text generation from one corpus first, add
-domains later" -- rj (Romeo & Juliet) is the one corpus in scope, RWKV-
-hybrid (the established best backbone, tasks/ducky.md Phase Z/Y) is the
-only backbone. No domain= or backbone= argument exists to select
-otherwise; when code comes back into scope this file's own history
-(DEFAULT_RUNS, code_source/symbol_table/call_graph wiring, use_retrieval)
-is the reference for how to reintroduce it properly.
+Single-backbone (RWKV-hybrid, the established best backbone, tasks/
+ducky.md Phase Z/Y) and single-checkpoint -- no domain= or backbone=
+argument exists to select otherwise. This paragraph used to also claim
+"single-domain, rj only" (2026-07-22: "nail text generation from one
+corpus first, add domains later"), which was true of the checkpoint
+DEFAULT_RUN pointed to at the time but is stale now: the real scale-up
+(see DEFAULT_RUN's own comment below) trained on four weighted pools --
+literary (rj+gutenberg, ~300M tokens), conversation (~9K tokens),
+code_core+code_breadth (~44M tokens combined), 344.5M tokens total, not
+rj alone. Verified directly, not just from config.json: prompting this
+checkpoint with "ROMEO:" drifts into Python-shaped code and Gutenberg-
+metadata text within a few hundred tokens (see samples.json in the run
+dir, and tasks/ducky.md). self.domain = "rj" in __init__ below still
+exists, but it only controls which grounding checks generation runs
+(code-specific checks skipped) -- it is not a claim about what data the
+loaded checkpoint was trained on. When code comes back into scope as
+its own selectable domain (not just a weighted pool inside one
+checkpoint) this file's own history (DEFAULT_RUNS, code_source/
+symbol_table/call_graph wiring, use_retrieval) is the reference for how
+to reintroduce it properly.
 
 No learn() anymore, and this is a real capability loss worth stating
 plainly, not glossing over: learn() only ever worked by adding edges to
@@ -166,12 +178,15 @@ class Ducky:
 
     def __init__(self, run_name: str = None, ensemble_run_names: list = None,
                  max_new_tokens: int = 300, track_history: bool = False):
-        # Hardcoded, not a parameter: single-corpus focus (rj) for now.
-        # generate_with_grounding/_resampling/mcts_generate/generate_with_repair
-        # still take a domain string internally (it decides whether code-only
-        # checks like syntax validity run) -- "rj" naturally skips those,
-        # which is exactly correct here, and those functions stay generic
-        # for when code comes back.
+        # Hardcoded, not a parameter: this is a grounding-behavior switch, not
+        # a claim about training data (the default checkpoint's real corpus
+        # mix is documented at DEFAULT_RUN above, not here). generate_with_
+        # grounding/_resampling/mcts_generate/generate_with_repair still take
+        # a domain string internally (it decides whether code-only checks
+        # like syntax validity run) -- "rj" skips those, appropriate since
+        # ask() has no way to know per-prompt whether the model is about to
+        # generate prose or code from its mixed training. Revisit if
+        # domain= ever becomes a real per-call selector.
         self.domain = "rj"
         self.max_new_tokens = max_new_tokens
         # RAM-only, cross-call (not cross-process) memory -- see

@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 
+# setuptools build metadata from `pip install -e .` -- regenerated on
+# every install, not source of truth.
+src/*.egg-info/
+
 # Regenerable caches -- tokenized corpus tensors, Ducky SDK setup (graph +
 # calibration), rebuilt automatically from source data/tokenizer when
 # missing. Not source of truth, and some exceed GitHub's 100MB file limit.

@@ -1297,33 +1297,328 @@ ZOH-stable stream encoder) until Track 2 produces a real number.
       further action until that number moves; revisit data mix / model size
       per the still-open Phase AJ items (rj/gutenberg split completion,
       Chinchilla-optimal resize) before assuming more scale alone fixes it.
-- [ ] **Track 2 (Noosphere, cross-modality, the real open question).** One
-      toy, CPU/small-GPU experiment, off the safety-critical path entirely:
-      Noosphere's own synthetic EEG generator (`v2_digital_self_replication/
-      data/synthetic_eeg.py`, zero hardware/subject risk) + Ducky's existing
-      small text/code pools. Train (a) a tiny shared RWKV core on both
-      streams (CE loss on text, MSE on the continuous 6-DOF target) and (b)
-      two size-matched single-modality baselines. Compare loss on each side
-      independently -- shared must not lose to either baseline to call the
-      hypothesis alive.
-- [ ] Track 2's result decides the *next* step, not whether the objective
-      stands (the objective is confirmed). If shared wins/ties both sides at
-      toy scale -- design the real modality-router + multi-head architecture
-      next, same small-scale-first ramp (`xs`/`s`/`m` before `xl`) as every
-      other architecture decision in this repo. If shared loses either side
-      at this size -- that is real evidence about *this* toy config, not a
-      verdict on the goal: next moves are a bigger shared core (real
-      generalist models that pull this off run 100M-1B+ params, per
-      `core_principle.md`), a different fusion point (e.g. shared trunk with
-      per-modality adapter layers instead of one undifferentiated core), or
-      staged distillation (train each side well, then merge) -- tried in
-      that order, each still proven cheaply before the next is attempted.
-      Noosphere's production encoder stays in place and unmodified through
-      all of this until whichever approach actually clears its gate.
+- [x] **Track 2 (Noosphere, cross-modality, the real open question) --
+      run, real negative on one side.** `src/run_track2_shared_core.py`:
+      Noosphere's own `synthetic_eeg.py` loaded directly by file path (zero
+      hardware/subject risk, no production file touched) + Ducky's existing
+      rj text corpus, vocab=1024. Trained (a) one shared 2-layer/d_model=32
+      RWKV core (`RWKVBlock`, reused unmodified from `rwkv_model.py`) on
+      both streams via alternating steps (text CE, EEG->6DOF MSE) and (b)
+      two separate single-modality cores with the *identical* block-stack
+      size, 400 steps each, CPU. Found and fixed a real bug before trusting
+      any number: `Core` built raw `RWKVBlock`s directly (not through
+      `RWKVModel`), so it skipped `RWKVModel`'s own std=0.02 init --
+      default `nn.Embedding` init (std=1) blew the tied text-head logits
+      up to ~30 nats CE instead of the correct ln(1024)~6.9 at
+      initialization. Fixed by porting `RWKVModel._init_weights` into
+      `Core`; re-verified sane at init before running the real 400-step
+      pass.
+      **Result (seed 57): shared beats the EEG-only baseline (0.2118 vs.
+      0.2338 MSE, val) but loses to the text-only baseline (5.6472 vs.
+      5.4244 CE, val, ~4% worse).** Fails Track 2's own bar ("must not
+      lose to either baseline") -- one clean win, one clean loss, not a
+      tie or a double win. Single seed at this point, same caveat as
+      every other first-pass result in this file.
+- [x] **Repeat-seed check (seeds 13, 99, alongside 57) -- sharpens the
+      verdict, doesn't soften it.** Text: shared loses to the text-only
+      baseline in **3/3 seeds**, consistent direction and magnitude
+      (seed57 +0.2228 nats/+4.1%, seed13 +0.2858/+5.3%, seed99
+      +0.2577/+4.8%) -- a real, reproducible cost, not noise. EEG: the
+      single-seed "shared wins" story does **not** replicate -- 2/3 wins
+      (seed57 -0.0220, seed99 -0.0120), 1/3 loss (seed13 +0.0138), all
+      small-magnitude relative to the baseline MSE (~0.18-0.25) --
+      indistinguishable from noise, no clean direction either way. Net:
+      more decisive than the first pass looked -- a consistent real
+      penalty on text with no reliable offsetting benefit on EEG, at this
+      toy config. Confirms the fail is real, not a single unlucky seed.
+- [x] **Different fusion point tried: tokenized unification (the
+      mechanism Phase D already proved for text/code/pixel/audio),
+      applied to EEG for the first time -- also a real loss, on all three
+      metrics.** `eeg_codec.py`: two small from-scratch VQ-VAE codecs
+      (same conv1d-stride-2-twice family as `codec.py`'s PixelVQVAE/
+      AudioVQVAE), one for the 21-channel EEG signal, one for the 6-DOF
+      commands, downsampling both by the same 4x factor so their code
+      sequences land in exact 1:1 time correspondence. `run_track2_
+      tokenized.py`: text tokens + EEG codes + command codes + 2 modality
+      markers now share **one** embedding table and softmax head
+      (`UnifiedCore`, vocab=1154) -- pure next-token CE everywhere, no
+      MSE head, removing the loss-scale mismatch the continuous-head
+      version had. The EEG->motor-intent decode task becomes "predict the
+      next command code having seen the EEG codes," expressed as sequence
+      continuation, not a bespoke regression head.
+      **Found and fixed a real methodological bug before trusting any
+      number**: comparing the shared model's raw CE (1154-way softmax)
+      against a baseline's raw CE (129-way softmax for the EEG-only
+      baseline) is not a fair comparison -- a bigger softmax has a higher
+      entropy floor regardless of learning quality, the exact "not
+      comparable in raw nats" lesson Phase O/J already established for
+      tokenizer vocab size. Fixed with a vocab-restricted ("masked") CE
+      that scores the shared model only over the class range the baseline
+      itself predicts over; verified the fix by confirming masked numbers
+      landed in the baseline's own ballpark instead of off by multiple
+      nats.
+      **Result (seed 57, 400 steps, masked comparison): shared loses on
+      all three metrics.** text: 5.5257 vs. 5.4144 (+2.1%). eeg overall:
+      4.3238 vs. 3.8303 (+12.9%). eeg cmd-only (the actual decode task):
+      3.7427 vs. 3.5385 (+5.8%). Worse than the continuous-head version in
+      one sense -- that one at least won cleanly on raw EEG MSE before the
+      repeat-seed check showed it was noise; this one has no win on
+      either side at all, on the *fair* comparison. Single seed so far,
+      same caveat as the first continuous-head pass before its own
+      repeat-seed check.
+- [x] **Third fusion mechanism: per-modality bottleneck adapters
+      (Houlsby et al. 2019, arXiv:1902.00751) on the shared trunk, plus a
+      real size step up -- per the user's explicit choice this round
+      (build the adapters, increase model size, don't gate on beating the
+      baselines by a specific margin this pass).** `run_track2_
+      adapters.py`: same one-embedding/one-softmax unified vocab as the
+      tokenized pass (still "comprehensively fluent on any token," not a
+      blend), but a small zero-initialized bottleneck adapter
+      (down-project/GELU/up-project, residual) after every shared block,
+      one set of adapters per modality -- lets each modality bend the
+      shared representation locally instead of the trunk's core weights
+      having to serve both identically. Size: d_model 32->64, n_layer
+      2->3 (this project's own "xs"->"s" rung, `train.py`'s `SIZES`) --
+      shared(+adapters) 248,608 params, baselines 227,520/170,240.
+      **Result (seed 57, 400 steps, masked comparison): mixed, and the
+      first real partial win.** eeg overall: shared 3.8604 vs. baseline
+      3.9099 -- **shared wins** (-1.3%). eeg cmd-only (the actual decode
+      task): shared 3.2719 vs. baseline 3.3280 -- **shared wins** (-1.7%).
+      text: shared 5.1515 vs. baseline 4.5042 -- shared loses, by a
+      *bigger* margin than either earlier mechanism (+14.4%, vs. +2.1%
+      tokenized / +4-5% continuous-head). Adapters did what they're
+      supposed to on the EEG side (flipped 0/3 wins to 2/3), but text
+      regressed further, not less, at the bigger size.
+      **Diagnosed, not just reported: likely a training-budget artifact,
+      not necessarily a mechanism ceiling.** `text_only`'s own train loss
+      only reached 4.27 by step 400 (`shared`'s combined loss reached
+      3.44) -- the bigger model plausibly needs more steps to converge,
+      and the alternating schedule still gives `shared` only half its 400
+      steps on text (unchanged since the first pass), so that penalty
+      bites harder now that there's more capacity to actually use. Not
+      re-tested at a longer step budget or with an uneven (text-favoring)
+      alternation ratio this round -- flagged, not fixed, matching the
+      user's own "don't worry about the gaps yet" framing for this pass.
+- [x] **Ratio fix: proportional/temperature-style mixing (T5/PaLM
+      convention -- naive 50/50 step alternation is not standard
+      practice for imbalanced-domain training; DoReMi, arXiv:2305.10429,
+      is the principled learned-weight version).** `--text-ratio` added
+      to `run_track2_adapters.py`'s `train_shared_adapter` -- probability
+      a given step trains on text vs. eeg, replacing the strict `step %
+      2` split. 3-point sweep at seed 57, d_model=64/n_layer=3:
+      | ratio | text gap | eeg overall | eeg cmd-only | shared wins |
+      |-------|----------|-------------|---------------|-------------|
+      | 0.5   | -14.4%   | **+1.3%**   | **+1.7%**     | 2/3 |
+      | 0.6   | **-12.3%** | **+1.35%** | **+2.33%**  | 2/3 |
+      | 0.75  | -9.0%    | -0.7%       | -0.8%         | 0/3 |
+      **0.6 dominates 0.5 on every metric simultaneously** (smaller text
+      loss *and* bigger eeg wins) -- a real sweet-spot signal, not just a
+      different trade-off point. 0.75 overshoots: it narrows the text gap
+      further but gives back eeg's win entirely, confirming the ratio
+      genuinely trades capacity between modalities as the T5/PaLM
+      literature would predict, and 0.75 sits past the useful range for
+      this setup. Text still hasn't fully closed at any ratio tried.
+- [x] **Repeat-seed check on the best ratio (0.6, seeds 13/99 alongside
+      57) -- real, mixed result with one strong, reproducible signal.**
+      | seed | text | eeg overall | eeg cmd-only |
+      |------|------|-------------|---------------|
+      | 57   | -12.3% | **+1.35%** | **+2.33%** |
+      | 13   | -15.1% | -0.73%     | **+6.12%** |
+      | 99   | -13.8% | **+3.08%** | **+9.40%** |
+      Text: loses in **3/3 seeds**, consistent and real (12-15% range) --
+      confirms the ratio fix narrowed but did not close the text cost.
+      Eeg overall: mixed, 2/3 wins -- the same noise-level inconsistency
+      pattern the very first repeat-seed check (Track 2's continuous-head
+      pass) found on raw eeg MSE; not trustworthy alone.
+      **Eeg cmd-only -- the actual EEG->motor-intent decode task, the one
+      metric that maps to what Noosphere would actually need -- wins in
+      3/3 seeds, with the margin *growing* across seeds (2.33% ->
+      6.12% -> 9.40%).** This is the strongest, most reproducible positive
+      signal found anywhere in the Track 2 investigation across all three
+      fusion mechanisms tried. Adapters + a tuned mixing ratio is the
+      first (and so far only) config where the specific capability this
+      track exists to test -- shared representation genuinely helping
+      decode motor intent from EEG, not just modeling EEG's own structure
+      or matching text -- shows up reliably rather than as a single-seed
+      artifact.
+- [x] **Size pushed further per the user's request: "m" tier
+      (d_model=128/n_layer=4, ~1M params, up from "s" tier's 64/3/250K),
+      text_ratio=0.6, seed 57 -- raw numbers look dramatically better, but
+      a real confound makes that read misleading.**
+      | metric | s-tier (64/3) | m-tier (128/4) |
+      |--------|---------------|-----------------|
+      | text gap | shared worse by 12.3% | shared worse by 12.85% (flat) |
+      | eeg overall | shared wins by 1.35% | shared wins by 16.46% |
+      | eeg cmd-only | shared wins by 2.33% | shared wins by 22.34% |
+      **Diagnosed, not taken at face value**: the shared model's own
+      absolute eeg performance barely moved with size (masked CE 3.8604
+      -> 3.8695 overall, 3.2719 -> 3.2824 cmd-only, both essentially
+      flat despite 4x capacity). What actually widened is that the
+      **eeg-only baseline's held-out loss got *worse* as it scaled**
+      (overall 3.91 -> 4.63, cmd-only 3.54 -> 4.23) even as its own
+      *train* loss collapsed to 0.19 -- textbook overfitting. Only 24
+      real EEG training trials exist; a dedicated 1M-param model pouring
+      100% of its steps into that has nowhere to go but memorize. The
+      shared model is implicitly shielded from this because most of its
+      steps go to the much larger text corpus. **Net: the widening "win"
+      is mostly baseline collapse, not the adapter mechanism getting more
+      effective with scale.** Text told a cleaner story: both shared and
+      baseline improved by a similar absolute amount, so that gap stayed
+      flat (not closed) rather than moving either direction.
+      Real implication for what "push size further" should mean next:
+      not just bigger d_model/n_layer again (that would only widen the
+      same overfitting-driven gap further), but first fixing the
+      comparison itself -- either more real EEG trials (the generator is
+      synthetic and cheap, this is easy) so the eeg-only baseline has
+      enough data to use bigger capacity without collapsing, or adding
+      early stopping/regularization to the baseline so it isn't
+      structurally penalized for capacity the shared model never has to
+      pay for. Not yet done.
+- [x] **Fix applied: 13x more synthetic EEG trials (`--n-subjects`/
+      `--n-trials` added to `run_track2_adapters.py`, 3x10 -> 10x40 = 30
+      -> 400 total, 24 -> 320 train). Confound confirmed real, and fixing
+      it mostly erases the earlier "win."**
+      Diagnostic check first: does the eeg-only baseline's held-out loss
+      now *improve* with size (not worsen, as it did on the 24-trial
+      set)? **Yes** -- overall 3.1734 -> 2.9895, cmd-only 2.7137 -> 2.6310
+      (s-tier -> m-tier) -- confirms the earlier overfitting diagnosis was
+      correct and this fixes it.
+      | metric | s-tier (320 trials) | m-tier (320 trials) |
+      |--------|----------------------|-----------------------|
+      | text | shared worse by 11.7% | shared worse by 9.1% |
+      | eeg overall | shared worse by 14.6% | shared worse by 8.9% |
+      | eeg cmd-only | shared worse by 16.2% | shared ~tied (+0.28%) |
+      **On a now-fair comparison, the "shared wins eeg" result mostly
+      disappears.** At s-tier shared loses on all three metrics --
+      including eeg, which it "won" against the undersized baseline
+      before. At m-tier it still loses on text/eeg-overall and only ties
+      (not wins) on cmd-only, versus the earlier 22%-margin "win" that
+      turned out to be driven by baseline overfitting rather than real
+      capability.
+      **Honest verdict: the earlier adapter result was substantially an
+      artifact of an unfairly small baseline, not solid evidence the
+      mechanism helps.** One real thing survives, though: going bigger
+      narrowed *all three* gaps consistently and monotonically (11.7% ->
+      9.1%, 14.6% -> 8.9%, 16.2% -> ~0%) -- a real, size-correlated trend
+      that keeps the door open rather than closing it, but as of now,
+      fairly measured, adapters have not demonstrated a genuine win on
+      anything.
+- [x] **Size pushed further per the user's request: "l" tier
+      (d_model=256/n_layer=6, ~5.5M params), same 320-trial fair eeg
+      dataset, text_ratio=0.6, seed 57 -- the narrowing trend continued
+      and two metrics apparently flipped to wins, but a **new confound**
+      (the mirror image of the one just fixed) makes the text flip
+      untrustworthy.**
+      | metric | s-tier | m-tier | l-tier |
+      |--------|--------|--------|--------|
+      | text | shared worse 11.7% | shared worse 9.1% | shared **wins** 7.9% |
+      | eeg overall | shared worse 14.6% | shared worse 8.9% | shared worse 1.5% |
+      | eeg cmd-only | shared worse 16.2% | shared ~tied +0.28% | shared **wins** 6.4% |
+      **Diagnosed before trusting it, same discipline as the eeg-side fix
+      above**: `text_only` baseline's own held-out loss went 4.5147 (s)
+      -> 3.9088 (m) -> **4.1974 (l), getting worse at the biggest size**,
+      while its train loss cratered to 1.44 -- the identical overfitting
+      signature that inflated the earlier eeg "win," just showing up on
+      text this time. Root cause: Track 2's text side has always used the
+      small rj-only corpus (`load_lm_corpus("rj", ...)`, ~50K tokens),
+      never grown the way the eeg dataset just was -- 5.4M dedicated
+      params is now real over-capacity for that little data (same
+      Chinchilla-ratio problem Phase J already documented at a smaller
+      scale). The shared model is comparatively shielded since only 60%
+      of its steps touch text. **Text's l-tier "win" is therefore likely
+      mostly this artifact, not real evidence** -- untrusted until the
+      text corpus is grown the same way eeg's was (this project already
+      has `load_lm_corpus("text", ...)`, rj+gutenberg, sitting unused
+      here).
+      EEG side is more trustworthy: `eeg_only` baseline's held-out loss
+      stayed roughly healthy across tiers (cmd-only 2.7137 -> 2.6310 ->
+      2.7012, only a mild wobble, nothing like text's reversal), so
+      cmd-only's continued narrowing into a small win, and eeg-overall's
+      continued narrowing toward zero, are more likely to reflect real
+      signal than noise or overfitting.
+      **Not yet done, natural next step**: switch the text side from
+      `load_lm_corpus("rj", ...)` to `load_lm_corpus("text", ...)`
+      (adds the Gutenberg pool already sitting in this repo) before
+      trusting or re-testing the text result at l-tier or beyond -- the
+      exact same fix class just validated on the eeg side.
+- [x] **Text-side fix applied (`--text-domain text`, rj+gutenberg,
+      573.7M tokens tokenized via `safe_tokenize_text.py` at vocab=1024,
+      peak RSS 10.0GB -- safe, no OOM). s/m-tier re-run, both datasets now
+      fixed simultaneously. The overfitting diagnostic is resolved, but a
+      new problem replaces it: shared loses on every metric at both
+      tiers, including eeg, which had been winning.**
+      | metric | s-tier (64/3) | m-tier (128/4) |
+      |--------|----------------|------------------|
+      | text | shared worse 6.6% | shared worse 10.1% |
+      | eeg overall | shared worse 15.4% | shared worse 11.1% |
+      | eeg cmd-only | shared worse 18.2% | shared worse 5.8% |
+      **Diagnostic check passed**: `text_only` baseline's held-out loss
+      now improves with size (5.0823 -> 4.4676, s -> m), the same healthy
+      pattern `eeg_only`'s fix already showed -- confirms the corpus-size
+      fix worked exactly as intended, unlike the earlier l-tier result
+      that turned out to be baseline overfitting.
+      **But fixing that revealed a different, real problem: at only 400
+      steps, the model barely samples a 573.7M-token corpus.** With
+      batch=16/block=128 and text_ratio=0.6, `shared` sees roughly
+      0.6*400*16*128 =~491K text tokens -- a vanishing fraction of 574M,
+      deep in the undertrained/early-training regime rather than anywhere
+      near convergence. `text_only` (100% of its steps on text) sees
+      ~1.64M tokens, still tiny in absolute terms but ~3.3x more than
+      `shared` gets, and undertrained-regime loss curves are steep early
+      -- exactly where a few hundred thousand extra tokens' head start
+      would show up as a large percentage gap. This is a fair comparison
+      (same corpus, same step budget) but not an informative one yet: a
+      400-step run was calibrated for the old ~50K-token rj-only corpus,
+      where 400 steps meant many epochs, not for a corpus 4 orders of
+      magnitude bigger.
+      **Not yet done**: re-run at a step budget where text has actually
+      seen a meaningful multiple of its own corpus (or at minimum, enough
+      steps that both `shared` and `text_only` have moved off the steep
+      early part of the loss curve) before treating this result as
+      informative about the fusion mechanism rather than about undertrained
+      text. The eeg side's regression at s-tier (18.2%, worse than any
+      prior eeg result) is a secondary effect of the same cause -- eeg's
+      own 40% step share didn't change, but competing against a now much
+      higher-loss text task for the same shared trunk capacity plausibly
+      makes early eeg optimization harder too, not necessarily a real
+      eeg-specific regression.
 - [ ] Explicit non-decision, unchanged: no Noosphere production file
       (`stream_encoder.py`, `safety_gate.py`, `kalman_filter.py`, or anything
       wired into `DigitalTwin`/`run_twin.py`) has been touched. Track 2 is a
       standalone script, not an integration.
+
+## Phase AB -- Agent harness: public SDK + terminal UI
+Per the user's explicit request to build out the North Star's "acting as
+an agent" half (`core_principle.md`). New `ducky_agent` package
+(`pip install -e .`-installable, `from ducky_agent import DuckyAgent`,
+console script `ducky-agent`), adapted from a reference open-source
+harness (decodingai-magazine/building-a-coding-agent-from-scratch-course)
+to what Ducky actually is -- zero instruction-tuning, zero native
+tool-calling, so a text-parsed Thought/Action grammar replaces the
+reference's reliance on a provider LLM's structured tool-call API.
+- [x] Text-parsed action grammar (restricted-AST validated), permission
+      gate (deny > allow > mode-default > ask, asks by default before
+      write/exec), 4-tool minimal set (read/list/write/run_shell),
+      generator-based turn loop with pause/resume at permission asks,
+      Textual TUI (single screen, permission modal, `--fake-model` demo
+      flag). 56 pytest tests + 6 flat scripted integration checks
+      (`verify_agent_harness.py`) + 4 headless TUI `Pilot` tests, all
+      passing against `ScriptedModel` before real Ducky was ever wired
+      in -- including a real-disk-verified check that permission deny
+      produces zero filesystem mutation and allow actually executes.
+- [x] **Real Ducky wired in (`DuckyModel`), honest measurement
+      (`bench_ducky_agent.py`, 5 gradeable tasks): 0/5 passed, 0/5
+      produced a single parseable Action.** Not a parser bug (0
+      `ParseErrorEvent`s too) -- the model never engaged with the
+      Thought/Action instruction format at all, drifting into its
+      dominant code-completion training pattern regardless of task.
+      Sharper than `bench_ducky.py`'s own 0/10: that showed Ducky can't
+      reliably write a correct function body; this shows it doesn't yet
+      reliably recognize a structured task format as something to follow,
+      even loosely. Consistent with every other honest 0/10-family result
+      in this file (Phase L). **Does not move Track 1's
+      `bench_ducky.py`-0/10 gate above** -- separate axis, unchanged.
+      See `ducky.md` for full output samples and detail.
 
 See [`core_principle.md`](core_principle.md) for why this order and not the
 obvious one. See [`ducky.md`](ducky.md) for Ducky's own architecture record
